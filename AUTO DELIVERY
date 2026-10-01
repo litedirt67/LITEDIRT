@@ -29,7 +29,7 @@ toggleButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 toggleButton.TextSize = 14
 toggleButton.Font = Enum.Font.SourceSansBold
-toggleButton.Text = "Lag-Free Trail: OFF"
+toggleButton.Text = "AUTO DRIVE: OFF"
 toggleButton.Parent = screenGui
 
 local uiCorner = Instance.new("UICorner")
@@ -126,7 +126,7 @@ local function startLagFreeRide()
 		vehicleModel = seat
 	end
 
-	toggleButton.Text = "Lag-Free Trail: ON"
+	toggleButton.Text = "AUTO DRIVE: ON"
 	toggleButton.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
 
 	task.spawn(function()
@@ -144,10 +144,10 @@ local function startLagFreeRide()
 
 					if not finalPos or (finalPos - currentPos).Magnitude < 15 then
 						running = false
-						toggleButton.Text = "Selesai!"
+						toggleButton.Text = "SUCCESS ✅!"
 						toggleButton.BackgroundColor3 = Color3.fromRGB(0, 100, 200)
 						task.wait(2)
-						toggleButton.Text = "Lag-Free Trail: OFF"
+						toggleButton.Text = "AUTO DRIVE: OFF"
 						toggleButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 						break
 					end
@@ -228,7 +228,7 @@ toggleButton.MouseButton1Click:Connect(function()
 		startLagFreeRide()
 	else
 		running = false
-		toggleButton.Text = "Lag-Free Trail: OFF"
+		toggleButton.Text = "AUTO DRIVE: OFF"
 		toggleButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 	end
 end)
