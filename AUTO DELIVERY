@@ -1,4 +1,4 @@
--- Salin dan jalankan skrip ini di Delta Executor (Ultra Lightweight Live Follower - Lag Free)
+-- Salin dan jalankan skrip ini di Delta Executor (Lag-Free Batch Trail Tracker)
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -11,7 +11,7 @@ local humanoid = character:WaitForChild("Humanoid")
 
 -- 1. Membuat Menu UI (Floating Button)
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "UltraLightTrailUI"
+screenGui.Name = "LagFreeTrailUI"
 screenGui.ResetOnSpawn = false
 
 pcall(function()
@@ -29,7 +29,7 @@ toggleButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 toggleButton.TextSize = 14
 toggleButton.Font = Enum.Font.SourceSansBold
-toggleButton.Text = "Auto Trail: OFF"
+toggleButton.Text = "Lag-Free Trail: OFF"
 toggleButton.Parent = screenGui
 
 local uiCorner = Instance.new("UICorner")
@@ -38,7 +38,7 @@ uiCorner.Parent = toggleButton
 
 local running = false
 
--- Fungsi mencari "deliverywaypoint" secara cepat
+-- Fungsi mencari "deliverywaypoint" secara ringan
 local function findDeliveryWaypoint()
 	for _, obj in ipairs(Workspace:GetChildren()) do
 		local cleanName = string.lower(obj.Name):gsub("[%s_]", "")
@@ -53,45 +53,69 @@ local function findDeliveryWaypoint()
 	return nil
 end
 
--- Fungsi super ringan: Hanya mencari SATU TrailOrb terdekat yang berada di depan motor secara instan
-local function findSingleClosestOrb(currentPos, lookVector, lastOrbPos)
-	local bestPos = nil
-	local shortestDist = math.huge
-
-	-- Ambil dari descendants tapi dibatasi jarak sangat dekat (maksimal 70 stud saja di sekitar motor)
+-- Fungsi scan super cepat & anti-lag (hanya ambil part yang berjarak dekat dengan posisi motor saat ini)
+local function getNearbyTrailPoints(currentPos)
+	local orbPoints = {}
+	
+	-- Batasi pencarian hanya dalam radius 600 stud dari posisi motor agar tidak membebani CPU
 	for _, obj in ipairs(Workspace:GetDescendants()) do
 		if obj:IsA("BasePart") then
 			local cleanName = string.lower(obj.Name):gsub("[%s_]", ""):gsub("0", "o")
 			if cleanName:find("trailorb") then
 				local pos = obj.Position
-				local dist = (pos - currentPos).Magnitude
-				
-				-- Cari orb dalam radius 8 sampai 70 stud
-				if dist > 6 and dist < 70 and dist < shortestDist then
-					-- Pastikan tidak balik arah ke orb yang baru saja dilewati
-					if not lastOrbPos or (pos - lastOrbPos).Magnitude > 12 then
-						local dirToOrb = (pos - currentPos).Unit
-						-- Harus berada di depan pandangan motor
-						if lookVector:Dot(dirToOrb) > -0.1 then
-							shortestDist = dist
-							bestPos = pos
-						end
-					end
+				if (pos - currentPos).Magnitude < 600 then
+					table.insert(orbPoints, pos)
 				end
 			end
 		end
 	end
 
-	return bestPos
+	if #orbPoints == 0 then return {} end
+
+	-- Urutkan secara estafet lokal (max 150 titik terdepan)
+	local orderedPath = {}
+	local currentPoint = currentPos
+
+	for i = 1, math.min(150, #orbPoints) do
+		if #orbPoints == 0 then break end
+		
+		local nearestIdx = 1
+		local shortestDist = math.huge
+
+		for idx, pos in ipairs(orbPoints) do
+			local dist = (pos - currentPoint).Magnitude
+			if dist < shortestDist and dist < 70 then
+				shortestDist = dist
+				nearestIdx = idx
+			end
+		end
+
+		-- Jika tidak ketemu dalam radius dekat, ambil sisa terdekat
+		if shortestDist == math.huge then
+			for idx, pos in ipairs(orbPoints) do
+				local dist = (pos - currentPoint).Magnitude
+				if dist < shortestDist then
+					shortestDist = dist
+					nearestIdx = idx
+				end
+			end
+		end
+
+		table.insert(orderedPath, orbPoints[nearestIdx])
+		currentPoint = orbPoints[nearestIdx]
+		table.remove(orbPoints, nearestIdx)
+	end
+
+	return orderedPath
 end
 
-local function startUltraLightRide()
+local function startLagFreeRide()
 	local seat = humanoid.SeatPart
 	if not seat then
 		toggleButton.Text = "RE RUN SCRIPT"
 		toggleButton.BackgroundColor3 = Color3.fromRGB(150, 0, 0)
 		task.wait(2)
-		toggleButton.Text = "Auto Trail: OFF"
+		toggleButton.Text = "Lag-Free Trail: OFF"
 		toggleButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 		running = false
 		return
@@ -102,18 +126,16 @@ local function startUltraLightRide()
 		vehicleModel = seat
 	end
 
-	toggleButton.Text = "Auto Trail: ON"
+	toggleButton.Text = "Lag-Free Trail: ON"
 	toggleButton.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
 
 	task.spawn(function()
-		local lastOrb = nil
-
 		while running do
 			if not seat.Parent then break end
 			local currentPos = seat.Position
 			local deliveryPos = findDeliveryWaypoint()
 
-			-- Jika sudah masuk radius 50 stud dari tujuan akhir (deliverywaypoint), langsung tancap gas ke finish!
+			-- Jika sudah dekat dengan deliverywaypoint (< 50 stud), langsung potong kompas ke finish
 			if deliveryPos and (deliveryPos - currentPos).Magnitude < 50 then
 				while running do
 					if not seat.Parent then break end
@@ -125,7 +147,7 @@ local function startUltraLightRide()
 						toggleButton.Text = "Selesai!"
 						toggleButton.BackgroundColor3 = Color3.fromRGB(0, 100, 200)
 						task.wait(2)
-						toggleButton.Text = "Auto Trail: OFF"
+						toggleButton.Text = "Lag-Free Trail: OFF"
 						toggleButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 						break
 					end
@@ -148,40 +170,54 @@ local function startUltraLightRide()
 				break
 			end
 
-			-- Cari TrailOrb terdekat secara instan di depan motor
-			local targetPos = findSingleClosestOrb(currentPos, seat.CFrame.LookVector, lastOrb)
+			-- Ambil jalur trail lokal di sekitar motor secara dinamis (ringan & tidak bikin lag)
+			local trailPath = getNearbyTrailPoints(currentPos)
 
-			-- Jika orb tidak tertangkap di depan, gunakan deliverywaypoint sebagai panduan arah
-			if not targetPos then
-				targetPos = deliveryPos
-			end
-
-			if not targetPos then
+			if #trailPath == 0 then
 				toggleButton.Text = "Mencari Trail..."
-				task.wait(0.1)
+				task.wait(0.2)
 				continue
 			end
 
-			lastOrb = targetPos
+			-- Ikuti titik-titik terdekat tersebut satu per satu
+			for _, waypointPos in ipairs(trailPath) do
+				if not running or not seat.Parent then break end
 
-			local flatTarget = Vector3.new(targetPos.X, currentPos.Y, targetPos.Z)
-			local direction = (flatTarget - currentPos)
-			local dist = direction.Magnitude
+				repeat
+					if not running or not seat.Parent then break end
+					currentPos = seat.Position
 
-			if dist > 3 then
-				local moveDir = direction.Unit
-				local speed = 4.5
-				local newPos = currentPos + (moveDir * speed)
-				local lookTarget = Vector3.new(targetPos.X, newPos.Y, targetPos.Z)
+					-- Cek ulang jarak ke finish
+					local checkDelivery = findDeliveryWaypoint()
+					if checkDelivery and (checkDelivery - currentPos).Magnitude < 50 then
+						break
+					end
 
-				if vehicleModel:IsA("Model") and vehicleModel.PrimaryPart then
-					vehicleModel:SetPrimaryPartCFrame(CFrame.lookAt(newPos, lookTarget))
-				else
-					seat.CFrame = CFrame.lookAt(newPos, lookTarget)
-				end
+					local flatTarget = Vector3.new(waypointPos.X, currentPos.Y, waypointPos.Z)
+					local direction = (flatTarget - currentPos)
+					local dist = direction.Magnitude
+
+					if dist < 10 then
+						break -- Lanjut ke titik berikutnya
+					else
+						local moveDir = direction.Unit
+						local speed = 4.5
+						local newPos = currentPos + (moveDir * speed)
+						local lookTarget = Vector3.new(waypointPos.X, newPos.Y, waypointPos.Z)
+
+						if vehicleModel:IsA("Model") and vehicleModel.PrimaryPart then
+							vehicleModel:SetPrimaryPartCFrame(CFrame.lookAt(newPos, lookTarget))
+						else
+							seat.CFrame = CFrame.lookAt(newPos, lookTarget)
+						end
+					end
+
+					task.wait(0.03)
+				until (waypointPos - seat.Position).Magnitude < 10 or not running
 			end
 
-			task.wait(0.03)
+			-- Beri sedikit jeda per siklus agar CPU tidak bekerja berlebihan (mencegah lag patah-patah)
+			task.wait(0.05)
 		end
 	end)
 end
@@ -189,10 +225,10 @@ end
 toggleButton.MouseButton1Click:Connect(function()
 	if not running then
 		running = true
-		startUltraLightRide()
+		startLagFreeRide()
 	else
 		running = false
-		toggleButton.Text = "Auto Trail: OFF"
+		toggleButton.Text = "Lag-Free Trail: OFF"
 		toggleButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 	end
 end)
