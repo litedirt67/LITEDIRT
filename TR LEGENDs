@@ -1,5 +1,5 @@
 -- Konfigurasi Link (Sudah dimasukkan sesuai permintaanmu)
-local WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx-GBZda29EfOTZ7MUjKFWLo52itefolmuh2XfzgiBTvKM5hZxtNEFvgmLAUuz1_sAy/exec"
+local WEB_APP_URL = "https://script.google.com/macros/s/AKfycbw0a8fzMz00mL0ZWhEW4tzDAxNReuIABx4oZtFWdINpmqgaEviLPGhQsDg0Dej1sel4/exec"
 local GITHUB_SCRIPT_URL = "https://raw.githubusercontent.com/litedirt67/LITEDIRT/refs/heads/TYSM/AUTO%20DELIVERY"
 local DISCORD_URL = "https://discord.gg/ZuHqAq7h4"
 
