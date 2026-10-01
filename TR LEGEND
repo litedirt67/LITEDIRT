@@ -1,6 +1,6 @@
 -- Konfigurasi Link (Sudah dimasukkan sesuai permintaanmu)
 local WEB_APP_URL = "https://script.google.com/macros/s/AKfycbx-GBZda29EfOTZ7MUjKFWLo52itefolmuh2XfzgiBTvKM5hZxtNEFvgmLAUuz1_sAy/exec"
-local GITHUB_SCRIPT_URL = "https://raw.githubusercontent.com/litedirt67/Auto-tele/refs/heads/TYSM/AUTO%20DELIVERY"
+local GITHUB_SCRIPT_URL = "https://raw.githubusercontent.com/litedirt67/LITEDIRT/refs/heads/TYSM/AUTO%20DELIVERY"
 local DISCORD_URL = "https://discord.gg/ZuHqAq7h4"
 
 -- Bersihkan GUI lama jika script dijalankan ulang
