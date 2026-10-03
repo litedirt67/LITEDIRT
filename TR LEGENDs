@@ -1,5 +1,5 @@
 local CorrectKey = "1"
-local ScriptUrl = "https://raw.githubusercontent.com/litedirt67/LITEDIRT/refs/heads/TYSM/TR%20LEGENDs"
+local ScriptUrl = "https://raw.githubusercontent.com/litedirt67/LITEDIRT/refs/heads/TYSM/AUTO%20DELIVERY"
 
 -- Create a simple UI for the Delta executor
 local ScreenGui = Instance.new("ScreenGui")
