@@ -37,19 +37,27 @@ TextLabel.Text = "Delta Key System"
 TextLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 
 TextButton.MouseButton1Click:Connect(function()
-    -- Cek apakah key benar (angka 1)
     if TextBox.Text == CorrectKey then
         TextLabel.Text = "Correct Key!"
         task.wait(1)
         ScreenGui:Destroy()
         
-        -- Load script utama dari GitHub kamu
-        local success, err = pcall(function()
-            loadstring(game:HttpGet(ScriptUrl))()
+        -- Ambil isi script dari GitHub dengan aman
+        local success, response = pcall(function()
+            return game:HttpGet(ScriptUrl)
         end)
         
-        if not success then
-            warn("Failed to load script: " .. tostring(err))
+        if success then
+            -- Jalankan script yang berhasil di-download
+            local runSuccess, runErr = pcall(function()
+                loadstring(response)()
+            end)
+            
+            if not runSuccess then
+                warn("Gagal mengeksekusi script utama: " .. tostring(runErr))
+            end
+        else
+            warn("Gagal mengambil data dari GitHub: " .. tostring(response))
         end
     else
         TextLabel.Text = "Wrong Key!"
