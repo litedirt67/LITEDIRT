@@ -43,7 +43,7 @@ local function btn(s,x,y,w,h)
  return b
 end
 local title=text('LITEDIRT ( GROWBLOX )',18,8,440,34);title.TextSize=20;title.Font=Enum.Font.GothamBold;title.TextYAlignment=Enum.TextYAlignment.Center;title.Active=true
-local pnbCategory=btn('PnB',12,62,95,38);pnbCategory.BackgroundColor3=blue
+local pnbCategory=btn('PnB',12,60,95,26);pnbCategory.BackgroundColor3=blue
 text('Pilih tile di sekitar player',126,54,390,24)
 text('Biru = dipilih | P = player',126,80,390,22)
 local blockInfo=text('Block: slot pilihan | Tangan: 1',343,110,175,40)
@@ -107,11 +107,12 @@ local alive,active,held=true,false,false
 local clearAim
 local operation='PNB'
 local clearRequested=false
+local factoryRequested=false
 local minimized=false
 local runMode='BOTH'
 local origin,step,last=nil,nil,Vector2.zero
 local function release()if held then held=false;pcall(function()V:SendMouseButtonEvent(last.X,last.Y,0,false,game,0)end)end end
-local function stop(s)if clearAim then clearAim.Visible=false end;clearRequested=false;active=false;release();hud.Visible=false;f.Visible=not minimized;status.Text=s or 'OFF' end
+local function stop(s)if clearAim then clearAim.Visible=false end;clearRequested=false;factoryRequested=false;active=false;release();hud.Visible=false;f.Visible=not minimized;status.Text=s or 'OFF' end
 local positionReader
 local pointerCorrection=Vector2.zero
 local pointerGeometryKey
@@ -448,8 +449,8 @@ local function ensureHome()
  return false
 end
 local function key(k)V:SendKeyEvent(true,k,false,game);V:SendKeyEvent(false,k,false,game)end
-local function collectTiles(offsets,cycleHome,recoveryId)
- assert(operation=='PNB','Auto collect hanya aktif untuk PnB')
+local function collectTiles(offsets,cycleHome,recoveryId,anyDrop)
+ assert(operation=='PNB' or operation=='FACTORY','Auto collect hanya aktif untuk PnB/Pabrik')
  local u=debug.getupvalues(positionReader)
  local world=u[6]
  local startX,startY=cycleHome[1],cycleHome[2]
@@ -485,6 +486,7 @@ local function collectTiles(offsets,cycleHome,recoveryId)
   end
   local function wanted(d)
    if type(d)~='table' or not d.uid or type(d.x)~='number' or type(d.y)~='number' or d.display then return false end
+   if anyDrop then return math.abs(d.x-startX)<=8 and d.y>=startY-4 and d.y<=math.min(world.h,startY+12) end
    if recoveryId then
     return d.id==recoveryId and math.abs(d.x-startX)<=8 and d.y>=startY-4 and d.y<=math.min(world.h,startY+12)
    end
@@ -658,7 +660,7 @@ local pnbControls={}
 for _,child in ipairs(f:GetChildren())do
  if child:IsA('GuiObject') and child~=title and child~=pnbCategory and not child:GetAttribute('keep') and not(child:IsA('TextButton') and child.Text=='X')then pnbControls[#pnbControls+1]=child end
 end
-local clearCategory=btn('Clear World',12,108,95,38)
+local clearCategory=btn('Clear World',12,90,95,26)
 local clearPage=obj('Frame',f,{Position=UDim2.fromOffset(116,52),Size=UDim2.fromOffset(412,376),BackgroundTransparency=1,Visible=false})
 do
  local bgc=obj('Frame',clearPage,{Size=UDim2.new(1,0,1,0),BackgroundColor3=Color3.fromRGB(28,32,46),BorderSizePixel=0})
@@ -667,19 +669,92 @@ end
 local function clearText(s,x,y,w,h)return obj('TextLabel',clearPage,{Text=s,Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundTransparency=1,TextColor3=Color3.new(1,1,1),Font=Enum.Font.Gotham,TextSize=13,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left})end
 local function clearButton(s,x,y,w,h)local b=obj('TextButton',clearPage,{Text=s,Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundColor3=gray,TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=13});obj('UICorner',b,{CornerRadius=UDim.new(0,6)});stroke(b,Color3.fromRGB(110,125,175),1,.7);return b end
 clearText('Clear World',8,0,390,34).TextSize=20
-clearText('Clear per baris: foreground lalu background. Teleport stabil 0,75 tile per 0,15 detik; hit tetap cepat.',8,42,390,66)
-clearText('Perubahan blok pada world bersifat permanen. Mulai hanya pada world yang memang ingin kamu kosongkan.',8,116,390,66)
-local clearStart=clearButton('Mulai Clear',8,195,180,38)
-local clearStop=clearButton('STOP / F8',202,195,180,38)
-local clearStatus=clearText('Siap. Scan dahulu saat Mulai ditekan.',8,249,390,115)
-local function showCategory(clear)
- clearPage.Visible=clear
- for _,item in ipairs(pnbControls)do item.Visible=not clear end
- pnbCategory.BackgroundColor3=clear and gray or blue
- clearCategory.BackgroundColor3=clear and blue or gray
+clearText('Jalan halus menuju target (tanpa teleport). Pilih metode sapuan:',8,38,390,40)
+clearText('Perubahan blok pada world bersifat permanen. Mulai hanya pada world yang memang ingin kamu kosongkan.',8,76,390,44)
+local clearMethod='BARIS'
+local methodButtons,methodInfo={},nil
+local methodTexts={BARIS='Baris: atas ke bawah, tile terdekat di baris itu dulu.',ULAR='Ular: sapu baris kiri-kanan bergantian, minim berhenti dan balik arah.',CLUSTER='Cluster: habiskan tile di sekitar dulu (maks 3 baris), lebih cepat.'}
+for index,entry in ipairs({{'BARIS','Baris'},{'ULAR','Ular'},{'CLUSTER','Cluster'}})do
+ local b=clearButton(entry[2],8+(index-1)*132,126,124,32)
+ methodButtons[entry[1]]=b
+ b.BackgroundColor3=entry[1]==clearMethod and blue or gray
+ b.Activated:Connect(function()
+  clearMethod=entry[1]
+  for name,mb in pairs(methodButtons)do mb.BackgroundColor3=name==clearMethod and blue or gray end
+  methodInfo.Text=methodTexts[clearMethod]
+ end)
 end
-pnbCategory.Activated:Connect(function()showCategory(false)end)
-clearCategory.Activated:Connect(function()showCategory(true)end)
+methodInfo=clearText(methodTexts[clearMethod],8,162,390,38)
+local clearStart=clearButton('Mulai Clear',8,208,180,38)
+local clearStop=clearButton('STOP / F8',202,208,180,38)
+local clearStatus=clearText('Siap. Scan dahulu saat Mulai ditekan.',8,256,390,108)
+local FA={}
+do
+ FA.category=btn('Pabrik',12,120,95,26)
+ FA.page=obj('Frame',f,{Position=UDim2.fromOffset(116,52),Size=UDim2.fromOffset(412,376),BackgroundTransparency=1,Visible=false})
+ local bgc=obj('Frame',FA.page,{Size=UDim2.new(1,0,1,0),BackgroundColor3=Color3.fromRGB(28,32,46),BorderSizePixel=0})
+ obj('UICorner',bgc,{CornerRadius=UDim.new(0,10)});stroke(bgc,edge,1,.55)
+ local function ftext(s,x,y,w,h)return obj('TextLabel',FA.page,{Text=s,Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundTransparency=1,TextColor3=Color3.new(1,1,1),Font=Enum.Font.Gotham,TextSize=13,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left})end
+ local function fbtn(s,x,y,w,h)local b=obj('TextButton',FA.page,{Text=s,Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundColor3=gray,TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=13});obj('UICorner',b,{CornerRadius=UDim.new(0,6)});stroke(b,Color3.fromRGB(110,125,175),1,.7);return b end
+ local function fbox(s,x,y,w,h)local b=obj('TextBox',FA.page,{Text=s,Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundColor3=gray,TextColor3=Color3.new(1,1,1),Font=Enum.Font.Gotham,TextSize=14,ClearTextOnFocus=false});obj('UICorner',b,{CornerRadius=UDim.new(0,6)});stroke(b);return b end
+ ftext('Pabrik: Plant + Harvest',8,0,390,34).TextSize=20
+ ftext('Pilih tile di menu PnB (P = posisi player). Siklus: tanam seed, tunggu, panen, kumpulkan drop.',8,38,390,40)
+ FA.seedLabel=ftext('Seed: belum dipilih',8,86,250,28)
+ local pick=fbtn('Pilih seed',276,84,126,32)
+ ftext('Waktu tumbuh (detik)',8,128,200,24)
+ FA.grow=fbox('60',216,124,90,30)
+ ftext('Jumlah siklus (0 = tanpa batas)',8,162,200,36)
+ FA.cycles=fbox('0',216,164,90,30)
+ local start=fbtn('Mulai Pabrik',8,208,180,38)
+ local stopb=fbtn('STOP / F8',202,208,180,38)
+ FA.status=ftext('Siap. Pilih seed dan tile, lalu Mulai.',8,256,390,108)
+ local function openSeedPicker()
+  stop('Memuat daftar seed...')
+  local ok,err=pcall(function()
+   local b=inventoryBinding();farmBinding=b;b.gui=P.PlayerGui:FindFirstChild('InventoryGui')
+   for _,row in ipairs(entries)do row.button:Destroy()end
+   table.clear(entries)
+   local sorted={}
+   for id,item in pairs(b.db)do if type(id)=='number' and type(item)=='table' and item.kind=='seed' then sorted[#sorted+1]=id end end
+   table.sort(sorted,function(a,c)
+    local an,cn=string.lower(b.db[a].name or ''),string.lower(b.db[c].name or '')
+    if an==cn then return a<c end
+    return an<cn
+   end)
+   assert(#sorted>0,'Tidak ada seed di ItemDB')
+   for index,id in ipairs(sorted)do
+    local item=b.db[id]
+    local row=obj('TextButton',scroll,{Text=string.format('%s | x%d',item.name,b.inv:count(id)),Size=UDim2.new(1,-8,0,38),BackgroundColor3=gray,TextColor3=Color3.new(1,1,1),TextSize=12,Font=Enum.Font.Gotham,TextWrapped=true,LayoutOrder=index,ZIndex=22})
+    obj('UICorner',row,{CornerRadius=UDim.new(0,5)});stroke(row,edge,1,.7)
+    entries[#entries+1]={button=row,name=string.lower(item.name or '')}
+    row.Activated:Connect(function()
+     FA.seedId=id;FA.seedLabel.Text='Seed: '..tostring(item.name)
+     picker.Visible=false;FA.status.Text='Seed dipilih: '..tostring(item.name)..' (stok '..b.inv:count(id)..')'
+    end)
+   end
+   picker.Visible=true;filter.Text='';applyFilter()
+  end)
+  if not ok then FA.status.Text='OFF - '..tostring(err) end
+ end
+ pick.Activated:Connect(openSeedPicker)
+ start.Activated:Connect(function()
+  if active or clearRequested or factoryRequested then FA.status.Text='Hentikan mode yang sedang aktif dahulu.';return end
+  factoryRequested=true;FA.status.Text='Menyiapkan Pabrik...'
+ end)
+ stopb.Activated:Connect(function()stop('OFF - Pabrik dihentikan')end)
+ status:GetPropertyChangedSignal('Text'):Connect(function()if operation=='FACTORY'then FA.status.Text=status.Text end end)
+end
+local function showCategory(page)
+ clearPage.Visible=page=='CLEAR'
+ FA.page.Visible=page=='FACTORY'
+ for _,item in ipairs(pnbControls)do item.Visible=page=='PNB' end
+ pnbCategory.BackgroundColor3=page=='PNB' and blue or gray
+ clearCategory.BackgroundColor3=page=='CLEAR' and blue or gray
+ FA.category.BackgroundColor3=page=='FACTORY' and blue or gray
+end
+pnbCategory.Activated:Connect(function()showCategory('PNB')end)
+clearCategory.Activated:Connect(function()showCategory('CLEAR')end)
+FA.category.Activated:Connect(function()showCategory('FACTORY')end)
 status:GetPropertyChangedSignal('Text'):Connect(function()if operation=='CLEAR'then clearStatus.Text=status.Text end end)
 clearStop.Activated:Connect(function()stop('OFF - Clear World dihentikan')end)
 -- Minimize to a draggable circular icon; running state is unchanged.
@@ -838,6 +913,7 @@ local function executeClear()
     -- A protected door can be traversable without being eligible for destruction.
     return type(item)=='table' and item.solid==false and not item.hurts and not item.deadly
    end
+   local walkStep,walkWait=.25,.05
    local function travel(goalX,goalY)
     local now=debug.getupvalues(positionReader)
     local sx,sy=math.floor(now[7]),math.floor(now[8]-.01)
@@ -882,8 +958,8 @@ local function executeClear()
       local dx,dy=waypoint.x+.5-p[7],waypoint.y+1-p[8]
       local distance=math.sqrt(dx*dx+dy*dy)
       if distance<.55 then break end
-      attempts=attempts+1;if attempts>8 then return false,string.format('waypoint (%d,%d) belum tercapai; aktual %.2f,%.2f, jarak %.2f',waypoint.x,waypoint.y,p[7],p[8],distance) end
-      local ratio=math.min(1,.75/distance)
+      attempts=attempts+1;if attempts>20 then return false,string.format('waypoint (%d,%d) belum tercapai; aktual %.2f,%.2f, jarak %.2f',waypoint.x,waypoint.y,p[7],p[8],distance) end
+      local ratio=math.min(1,walkStep/distance)
       local nx,ny=p[7]+dx*ratio,p[8]+dy*ratio
       local done,problem=false,nil
       task.spawn(function()local ok,err=pcall(world.goTo,nx-.5,ny-1);if not ok then problem=err end;done=true end)
@@ -891,7 +967,7 @@ local function executeClear()
       while not done and active and alive and os.clock()<deadline do task.wait(.01)end
       if not active or not alive then return false end
       if not done or problem then return false,problem and tostring(problem)or 'goTo timeout' end
-      if not waitFor(.15)then return false end
+      if not waitFor(walkWait)then return false end
      end
     end
     return active and alive
@@ -921,7 +997,7 @@ local function executeClear()
    local function standFor(t,current)
     local dx,dy=t.x+.5-current[7],t.y+.5-(current[8]-.475)
     -- Punch nearby blocks directly instead of teleporting for every target.
-    if math.abs(dx)<=1.4 and math.abs(dy)<=1.4 then return {stay=true,score=dx*dx+dy*dy}end
+    if math.abs(dx)<=2.0 and math.abs(dy)<=2.0 then return {stay=true,score=dx*dx+dy*dy}end
     local best
     for _,o in ipairs({{0,-1},{-1,0},{1,0},{0,1}})do
      local x,y=t.x+o[1],t.y+o[2]
@@ -979,11 +1055,28 @@ local function executeClear()
       end
      end
     end
+    if not chosen and clearMethod=='CLUSTER' and topRow then
+     -- Habiskan tile di sekitar player (maks 3 baris dari baris teratas) sebelum berpindah.
+     for i,t in ipairs(queue)do
+      if not t.done and t.attempts<3 and t.y<=topRow+2 and math.abs(t.x+.5-current[7])<=6 then
+       local candidate=standFor(t,current)
+       if candidate and (not stand or candidate.score<stand.score)then chosen=t;stand=candidate end
+      end
+      if i%256==0 then task.wait()end
+     end
+    end
     if not chosen then
+     local dir=(topRow or 0)%2==0 and 1 or -1
+     local bestRank
      for i,t in ipairs(queue)do
       if not t.done and t.y==topRow and t.attempts<3 then
        local candidate=standFor(t,current)
-       if candidate and (not stand or candidate.score<stand.score)then chosen=t;stand=candidate end
+       if candidate then
+        local rank=candidate.score
+        -- Ular: baris genap ke kanan, ganjil ke kiri; tile di belakang diprioritaskan terakhir.
+        if clearMethod=='ULAR' and (t.x+.5-current[7])*dir<-1 then rank=rank+10000 end
+        if not bestRank or rank<bestRank then chosen=t;stand=candidate;bestRank=rank end
+       end
       end
       if i%256==0 then task.wait()end
      end
@@ -1047,12 +1140,141 @@ local function executeClear()
   end)
   release();if not ok then stop('OFF - '..tostring(err))end
 end
+local function executeFactory()
+ operation='FACTORY'
+ local tb=U:GetFocusedTextBox();if tb then tb:ReleaseFocus() end
+ local setup,problem=pcall(function()
+  assert(FA.seedId,'Pilih seed dahulu')
+  assert(next(targets),'Pilih tile di menu PnB dahulu')
+  farmBinding=inventoryBinding();farmBinding.gui=P.PlayerGui:FindFirstChild('InventoryGui')
+  bindObservations();autoPosition()
+ end)
+ if not setup then FA.status.Text='OFF - '..tostring(problem);operation='PNB';return end
+ local growSeconds=math.max(1,tonumber(FA.grow.Text) or 60)
+ local maxCycles=math.max(0,math.floor(tonumber(FA.cycles.Text) or 0))
+ active=true;hud.Visible=true;f.Visible=false
+ local ok,err=pcall(function()
+  local seedId=FA.seedId
+  local state=debug.getupvalues(positionReader)
+  local world=state[6];local name=world.name
+  farmHome={state[7],state[8],name=name}
+  observed.worldName=name
+  local baseX,baseY=math.floor(state[7]),math.floor(state[8]-.475)
+  local offsets={}
+  for _,v in pairs(targets)do offsets[#offsets+1]=v end
+  table.sort(offsets,function(a,b)if a[2]==b[2]then return a[1]<b[1]else return a[2]<b[2]end end)
+  local cells,kept={},{}
+  for _,o in ipairs(offsets)do
+   local x,y=baseX+o[1],baseY+o[2]
+   if x>=0 and x<world.w and y>=0 and y<world.h then cells[#cells+1]={x=x,y=y};kept[#kept+1]=o end
+  end
+  assert(#cells>0,'Semua tile berada di luar world')
+  local function tileAt(x,y)local row=world.fg[y];return row and row[x] or 0 end
+  local function equipSeed()
+   local b=farmBinding
+   assert(b.inv:count(seedId)>0,'Stok seed habis')
+   if b.hotbar[1]~=seedId then
+    local saved={b.hotbar[1],b.hotbar[2],b.hotbar[3]}
+    local replacement={seedId}
+    for i=1,3 do local v=saved[i];if v and v~=seedId and not table.find(replacement,v)then replacement[#replacement+1]=v end end
+    for i=1,3 do b.hotbar[i]=replacement[i] or false end
+    local ev=b.inv.changed
+    assert(typeof(ev)=='Instance' and ev:IsA('BindableEvent'),'Inventory.changed bukan BindableEvent')
+    ev:Fire()
+   end
+   for attempt=1,3 do
+    key(Enum.KeyCode.Two)
+    if not waitFor(.12)then return false end
+    if b.inv.selected==seedId then return true end
+   end
+   return true
+  end
+  local function plantAll()
+   local planted={}
+   if not equipSeed()then return nil end
+   for i,c in ipairs(cells)do
+    if not active or not alive then return nil end
+    if tileAt(c.x,c.y)==0 then
+     for attempt=1,3 do
+      if farmBinding.inv:count(seedId)<=0 then break end
+      if farmBinding.inv.selected~=seedId then key(Enum.KeyCode.Two);if not waitFor(.1)then return nil end end
+      local stockBefore=farmBinding.inv:count(seedId)
+      status.Text=string.format('PLANT %d/%d (%d,%d) coba %d',i,#cells,c.x,c.y,attempt)
+      clearPunch(c.x,c.y)
+      if not active or not alive then return nil end
+      local untilT=os.clock()+.8
+      while tileAt(c.x,c.y)==0 and farmBinding.inv:count(seedId)>=stockBefore and os.clock()<untilT do
+       if not waitFor(.05)then return nil end
+      end
+      if tileAt(c.x,c.y)~=0 or farmBinding.inv:count(seedId)<stockBefore then
+       local settle=os.clock()+.3
+       while tileAt(c.x,c.y)==0 and os.clock()<settle do if not waitFor(.05)then return nil end end
+       planted[#planted+1]={x=c.x,y=c.y,id=tileAt(c.x,c.y)}
+       break
+      end
+     end
+    end
+   end
+   return planted
+  end
+  local function waitGrow(seconds)
+   local untilT=os.clock()+seconds
+   while os.clock()<untilT do
+    assert(world.name==name,'World berubah; Pabrik dihentikan')
+    if not waitFor(.25)then return false end
+    status.Text=string.format('TUNGGU pohon tumbuh: %d detik lagi',math.ceil(untilT-os.clock()))
+   end
+   return true
+  end
+  local function harvestAll(planted)
+   local broken=0
+   for i,c in ipairs(planted)do
+    if c.id~=0 then
+     local hits,fails=0,0
+     while tileAt(c.x,c.y)==c.id and hits<150 and fails<3 do
+      if not active or not alive then return false end
+      if not ensureHand()then return false end
+      hits=hits+1
+      status.Text=string.format('HARVEST %d/%d (%d,%d) hit %d',i,#planted,c.x,c.y,hits)
+      if not clearPunch(c.x,c.y)then
+       if not active or not alive then return false end
+       fails=fails+1
+      else fails=0 end
+     end
+     if tileAt(c.x,c.y)~=c.id then broken=broken+1 end
+    end
+   end
+   return true,broken
+  end
+  local cycle,total=0,0
+  while active and alive do
+   assert(world.name==name,'World berubah; Pabrik dihentikan')
+   local planted=plantAll()
+   if not planted then return end
+   if #planted==0 then stop('OFF - tidak ada seed yang berhasil ditanam. '..punchReason);return end
+   if not waitGrow(growSeconds)then return end
+   local done,broken=harvestAll(planted)
+   if not done then return end
+   total=total+(broken or 0)
+   collectTiles(kept,farmHome,nil,true)
+   if not active or not alive then return end
+   cycle=cycle+1;cycleCount=cycleCount+1;updateHud()
+   if maxCycles>0 and cycle>=maxCycles then break end
+  end
+  stop(string.format('PABRIK selesai: %d siklus, %d pohon dipanen',cycle,total))
+ end)
+ release();if not ok then stop('OFF - '..tostring(err))end
+end
 task.spawn(function()
  while alive do
   task.wait(.05)
   if clearRequested and not active then
    clearRequested=false
    executeClear()
+  end
+  if factoryRequested and not active then
+   factoryRequested=false
+   executeFactory()
   end
  end
 end)
