@@ -3,9 +3,11 @@ local Players = game:GetService("Players")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local VirtualUser = game:GetService("VirtualUser")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UIS = game:GetService("UserInputService")
 local P = Players.LocalPlayer
+local VERSION = "v1.0.0"
 
-for _, n in ipairs({"KENCOT", "LITEDIRT"}) do
+for _, n in ipairs({"KENCOT", "LITEDIRT", "LITEDIRT_GRID"}) do
     local old = P.PlayerGui:FindFirstChild(n)
     if old then old:Destroy() end
 end
@@ -70,16 +72,7 @@ local function isGameFn(fn)
     if ok and type(s) == 'string' and s ~= '' and not string.find(s, 'GameGui', 1, true) then return false end
     return true
 end
-local function findGameFns()
-    if (GF.punch and GF.setTile) or not (getgc and getconsts) then return end
-    for _, v in ipairs(getgc(true)) do
-        if type(v) == 'function' and isGameFn(v) then
-            if not GF.setTile and isSetTileFn(v) then GF.setTile = v
-            elseif not GF.punch and isPunchFn(v) then GF.punch = v end
-            if GF.setTile and GF.punch then break end
-        end
-    end
-end
+local function findGameFns() end -- diisi oleh scan bertahap (runScan)
 
 -- ===== State =====
 local alive, active, held = true, false, false
@@ -95,7 +88,12 @@ local cfg = {
     growSec = 60,
     growUnit = 1,
     clearDir = 'KIRI',     -- arah mulai Clear: KIRI | KANAN
-    factoryBreak = true,   -- Pabrik: break sisa tile setelah panen
+    factoryBreak = true,
+    dfStart = 'KIRI',      -- Auto DF: sisi mulai
+    dfPlatSlot = 3,        -- slot platform (ujung baris)
+    dfLastRow = 52,        -- Y baris dirt terakhir (dari template)
+    dfLeft = 1,            -- X platform ujung kiri
+    dfRight = 0,           -- X platform ujung kanan (0 = lebar world - 2)   -- Pabrik: break sisa tile setelah panen
     antiAfk = true,
 }
 local stats = {cycles = 0, started = 0}
@@ -103,26 +101,69 @@ local slotKeys = {Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.K
 
 local function release() if held then held = false; pcall(function() VirtualInputManager:SendMouseButtonEvent(last.X, last.Y, 0, false, game, 0) end) end end
 local function notify(t, c, d) WindUI:Notify({ Title = t, Content = c, Duration = d or 3 }) end
+local onStopUI
 local function stop(s)
     active = false; AutoInput.active = false; AutoInput.left = false; AutoInput.right = false; AutoInput.jump = false; release()
     notify("LITEDIRT", s or "Berhenti")
+    if onStopUI then pcall(onStopUI) end
 end
 
 local positionReader
 local pointerCorrection = Vector2.zero
 local pointerGeometryKey
+-- ===== Scan bertahap (1x getgc, dipecah per chunk biar tidak freeze) =====
+local Loader = {done = false, running = false, ns = nil}
+local function isPosFn(fn)
+    local ok, u = pcall(debug.getupvalues, fn)
+    return ok and type(u) == 'table' and u[1] == Players and type(u[6]) == 'table' and type(u[6].fg) == 'table' and type(u[6].bg) == 'table'
+        and type(u[2]) == 'number' and type(u[4]) == 'number' and type(u[5]) == 'number' and type(u[7]) == 'number' and type(u[8]) == 'number'
+        and type(u[14]) == 'table' and type(u[14].select) == 'function' and type(u[35]) == 'function'
+end
+local function isNamespace(value)
+    local took = rawget(value, 'took'); local tile = rawget(value, 'tileChanged')
+    return type(took) == 'table' and type(tile) == 'table' and type(took.listen) == 'function' and type(tile.listen) == 'function'
+        and type(rawget(value, 'take')) == 'table' and type(rawget(value, 'move')) == 'table' and type(rawget(value, 'worldTag')) == 'function'
+end
+local function runScan()
+    if Loader.done or Loader.running then return end
+    if not getgc then Loader.done = true; return end
+    Loader.running = true
+    notify("LITEDIRT", "Memuat 1/3: ambil data game...", 3)
+    task.wait(.2)
+    local list = getgc(true)
+    task.wait()
+    local total, CHUNK = #list, 2500
+    notify("LITEDIRT", "Memuat 2/3: scan " .. total .. " objek (bertahap)", 4)
+    for i = 1, total do
+        if not alive then Loader.running = false; return end
+        local v = list[i]
+        local tv = type(v)
+        if tv == 'function' then
+            if (not islclosure or islclosure(v)) then
+                if not positionReader and isPosFn(v) then positionReader = v end
+                if getconsts and isGameFn(v) then
+                    if not GF.setTile and isSetTileFn(v) then GF.setTile = v
+                    elseif not GF.punch and isPunchFn(v) then GF.punch = v end
+                end
+            end
+        elseif tv == 'table' and not Loader.ns then
+            if isNamespace(v) then Loader.ns = v end
+        end
+        if i % CHUNK == 0 then task.wait() end
+    end
+    list = nil
+    Loader.done, Loader.running = true, false
+    notify("LITEDIRT", "Memuat 3/3: selesai" .. (positionReader and "" or " (posisi player belum ketemu)"), 3)
+end
+local function ensureReady()
+    if Loader.done then return end
+    if not Loader.running then task.spawn(runScan) end
+    while not Loader.done and alive do task.wait(.1) end
+end
+
 local function autoPosition()
     assert(type(getgc) == 'function' and debug and type(debug.getupvalues) == 'function', 'Posisi otomatis tidak tersedia')
-    if not positionReader then
-        for _, fn in ipairs(getgc()) do if type(fn) == 'function' then
-            local ok, u = pcall(debug.getupvalues, fn)
-            if ok and u[1] == Players and type(u[6]) == 'table' and type(u[6].fg) == 'table' and type(u[6].bg) == 'table'
-                and type(u[2]) == 'number' and type(u[4]) == 'number' and type(u[5]) == 'number' and type(u[7]) == 'number' and type(u[8]) == 'number'
-                and type(u[14]) == 'table' and type(u[14].select) == 'function' and type(u[35]) == 'function' then
-                positionReader = fn; break
-            end
-        end end
-    end
+    if not positionReader then ensureReady() end
     assert(positionReader, 'Game.act tidak ditemukan')
     local u = debug.getupvalues(positionReader)
     local gg = P.PlayerGui:FindFirstChild('GameGui'); local w = gg and gg:FindFirstChild('World'); local c = w and w:FindFirstChild('Camera')
@@ -141,14 +182,8 @@ end
 -- ===== Observer packet took/tileChanged =====
 local observed = {tiles={}, pickupSerial=0, pickupPositive=0}
 local function bindObservations()
-    local ns
-    for _, value in ipairs(getgc(true)) do
-        if type(value) == 'table' then
-            local took = rawget(value, 'took'); local tile = rawget(value, 'tileChanged')
-            if type(took) == 'table' and type(tile) == 'table' and type(took.listen) == 'function' and type(tile.listen) == 'function'
-                and type(rawget(value, 'take')) == 'table' and type(rawget(value, 'move')) == 'table' and type(rawget(value, 'worldTag')) == 'function' then ns = value; break end
-        end
-    end
+    if not Loader.ns then ensureReady() end
+    local ns = Loader.ns
     assert(ns, 'Tidak dapat membaca packet took/tileChanged')
     local env = type(getgenv) == 'function' and getgenv() or _G
     local registry = env.__KENCOT_PACKET_OBSERVER
@@ -576,9 +611,68 @@ local function clearWorld()
     stop("Clear selesai (" .. tostring(next(skipped) and "ada tile dilewati" or "bersih") .. ")")
 end
 
+-- Auto DF: bangun baris dirt tiap 2 tile, platform di kedua ujung, zigzag.
+-- Hanya membaca/menaruh tile di dekat player (aman dari batas render).
+local function dfBuild()
+    local w = Path.sample().w
+    local function tileAt(x, y) local r = w.fg[y]; return (r and r[x]) or 0 end
+    local L = cfg.dfLeft
+    local R = (cfg.dfRight > 0) and cfg.dfRight or (w.w - 2)
+    local d = (cfg.dfStart == 'KIRI') and 1 or -1
+    local gapY = math.floor(Path.sample().y - .475) -- baris jalan pertama = posisi player sekarang
+    local placed, failed = 0, 0
+    local function place(tx, ty, slot)
+        for _ = 1, 3 do
+            if not (alive and active) then return false end
+            if tileAt(tx, ty) ~= 0 then return true end
+            autoPosition()
+            local s = Path.sample()
+            local px, py = math.floor(s.x), math.floor(s.y - .475)
+            pressSlot(slot)
+            clickTile(tx - px, ty - py)
+            task.wait(math.max(cfg.delay, .15))
+            if tileAt(tx, ty) ~= 0 then placed += 1; return true end
+        end
+        failed += 1
+        return false
+    end
+    local function dropTo(targetY)
+        AutoInput.active = true; AutoInput.down = true
+        local t0 = os.clock()
+        while alive and active and os.clock() - t0 < 2.5 do
+            local s = Path.sample()
+            if s.grounded and math.floor(s.y - .475) >= targetY then break end
+            task.wait()
+        end
+        AutoInput.down = false; AutoInput.active = false
+    end
+    while alive and active do
+        local dirtY = gapY + 1
+        if dirtY > cfg.dfLastRow then break end
+        local x0, x1 = L, R
+        if d == -1 then x0, x1 = R, L end
+        if not Path.goCell(x0, gapY, 0, 25, true) then stop("DF: gagal ke ujung baris Y=" .. gapY); return end
+        for x = x0, x1 - d, d do
+            if not (alive and active) then return end
+            local tx = x + d
+            place(tx, dirtY, (tx == x1) and cfg.dfPlatSlot or cfg.blockSlot)
+            if not Path.goCell(tx, gapY, 0, 15, true) then stop("DF: tertahan di X=" .. tx .. " Y=" .. gapY); return end
+        end
+        if dirtY + 2 > cfg.dfLastRow then break end
+        place(x1, dirtY + 2, cfg.dfPlatSlot) -- platform baris berikutnya (3 tile di bawah)
+        dropTo(gapY + 2)
+        gapY = gapY + 2; d = -d
+    end
+    stats.cycles += 1
+    stop(string.format("Auto DF selesai (dipasang %d, gagal %d)", placed, failed))
+end
+
 local function runOnce()
     if cfg.mode == 'Clear' then
         autoPosition(); clearWorld(); return
+    end
+    if cfg.mode == 'DF' then
+        autoPosition(); dfBuild(); return
     end
     local list = sortedTargets()
     if #list == 0 then stop("Pilih tile dulu di grid"); return end
@@ -618,11 +712,11 @@ task.spawn(function()
 end)
 
 -- ===================================================
--- UI (SATU TAB)
+-- UI (TAB MAIN + INFO)
 -- ===================================================
 local Window = WindUI:CreateWindow({
     Title = "LITEDIRT",
-    Author = "GROWBLOX",
+    Author = "GROWBLOX " .. VERSION,
     Icon = "sprout",
     Folder = "LitedirtWindUI",
     ToggleKey = Enum.KeyCode.RightShift,
@@ -632,119 +726,223 @@ local Window = WindUI:CreateWindow({
     Size = UDim2.fromOffset(560, 480),
 })
 
-local Tab = Window:Tab({ Title = "LITEDIRT", Icon = "sprout" })
+local Main = Window:Tab({ Title = "Main", Icon = "home" })
+local InfoTab = Window:Tab({ Title = "Info", Icon = "info" })
 
--- 1. KONTROL UTAMA
-local Control = Tab:Section({ Title = "1. Kontrol Utama" })
-local masterToggle
-local function startRun()
-    if cfg.mode ~= 'Clear' and not next(targets) then notify("Peringatan", "Pilih tile di Grid dulu!"); return false end
+-- ===== Toggle jalan per fitur (hanya satu yang boleh aktif) =====
+local runToggles, resetting = {}, false
+onStopUI = function()
+    if resetting then return end
+    resetting = true
+    for _, t in pairs(runToggles) do pcall(function() t:Set(false) end) end
+    resetting = false
+end
+local function startRun(mode)
+    if mode ~= 'Clear' and mode ~= 'DF' and not next(targets) then notify("Peringatan", "Pilih tile di Grid dulu!"); return false end
     local ok, err = pcall(function() bindObservations(); findGameFns(); autoPosition() end)
     if not ok then notify("Gagal", tostring(err), 4); return false end
+    cfg.mode = mode
     active = true; stats.started = os.clock()
-    notify("LITEDIRT", "Mulai: " .. cfg.mode)
+    notify("LITEDIRT", "Mulai: " .. mode)
     return true
 end
-Control:Dropdown({
-    Title = "Mode",
-    Values = {"PnB", "Pabrik", "Clear"},
-    Value = cfg.mode,
-    Callback = function(v) cfg.mode = v end,
-})
-masterToggle = Control:Toggle({
-    Title = "Jalankan (ON / OFF)",
-    Value = false,
-    Callback = function(on)
-        if on then
-            if not startRun() then pcall(function() masterToggle:Set(false) end) end
-        else
-            stop("Dihentikan")
-        end
-    end,
-})
-Control:Button({
-    Title = "Stop Semua",
-    Desc = "Hentikan loop dan lepas semua input",
-    Callback = function() pcall(function() masterToggle:Set(false) end); stop("Dihentikan") end,
-})
-
--- 2. GRID TILE
-local Grid = Tab:Section({ Title = "2. Grid Tile (5x5 sekitar player)" })
-local tileValues, tileMap = {}, {}
-for y = -2, 2 do
-    for x = -2, 2 do
-        local name = (x == 0 and y == 0) and "Player (0,0)" or string.format("(%d,%d)", x, y)
-        tileValues[#tileValues+1] = name
-        tileMap[name] = {x, y}
-    end
-end
-local tileDrop
-tileDrop = Grid:Dropdown({
-    Title = "Pilih Tile",
-    Values = tileValues,
-    Value = {},
-    Multi = true,
-    AllowNone = true,
-    Callback = function(sel)
-        table.clear(targets)
-        for _, n in ipairs(sel) do
-            local t = tileMap[type(n) == 'table' and n.Title or n]
-            if t then targets[t[1]..':'..t[2]] = t end
-        end
-    end,
-})
-local function preset(name, fn)
-    Grid:Button({
-        Title = name,
-        Callback = function()
-            table.clear(targets)
-            local names = {}
-            for y = -2, 2 do for x = -2, 2 do
-                if fn(x, y) then
-                    targets[x..':'..y] = {x, y}
-                    names[#names+1] = (x == 0 and y == 0) and "Player (0,0)" or string.format("(%d,%d)", x, y)
+local function runToggle(section, mode, title)
+    local t
+    t = section:Toggle({
+        Title = title,
+        Value = false,
+        Callback = function(on)
+            if resetting then return end
+            if on then
+                if active then
+                    notify("Peringatan", "Matikan fitur yang lain dulu", 2)
+                    resetting = true; pcall(function() t:Set(false) end); resetting = false
+                    return
                 end
-            end end
-            pcall(function() tileDrop:Select(names) end)
-            notify("Grid", #names .. " tile dipilih", 2)
+                if not startRun(mode) then
+                    resetting = true; pcall(function() t:Set(false) end); resetting = false
+                end
+            else
+                stop("Dihentikan")
+            end
         end,
     })
+    runToggles[mode] = t
+    return t
 end
-preset("Preset: Depan (kiri+kanan)", function(x, y) return y == 0 and x ~= 0 and math.abs(x) <= 2 end)
-preset("Preset: Baris Bawah", function(x, y) return y == 1 end)
-preset("Preset: 3x3", function(x, y) return math.abs(x) <= 1 and math.abs(y) <= 1 end)
-preset("Preset: Semua 5x5", function() return true end)
-preset("Kosongkan Grid", function() return false end)
 
--- 3. PENGATURAN
-local Set = Tab:Section({ Title = "3. Pengaturan" })
-Set:Dropdown({
-    Title = "Aksi PnB",
+-- ===== Panel grid kotak 5x5 (bisa digeser) =====
+local gridGui, gridCells = nil, {}
+local function refreshGrid()
+    for k, b in pairs(gridCells) do
+        b.BackgroundColor3 = targets[k] and Color3.fromRGB(46, 160, 90) or Color3.fromRGB(45, 45, 55)
+    end
+end
+local function setSelection(fn)
+    table.clear(targets)
+    for y = -2, 2 do for x = -2, 2 do
+        if fn(x, y) then targets[x..':'..y] = {x, y} end
+    end end
+    refreshGrid()
+end
+local function destroyGrid()
+    if gridGui then pcall(function() gridGui:Destroy() end); gridGui = nil end
+end
+local function buildGrid()
+    destroyGrid()
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "LITEDIRT_GRID"; gui.ResetOnSpawn = false; gui.DisplayOrder = 50
+    gui.Parent = P.PlayerGui
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.fromOffset(262, 296)
+    frame.Position = UDim2.new(0, 24, 0.5, -148)
+    frame.BackgroundColor3 = Color3.fromRGB(25, 25, 32)
+    frame.BorderSizePixel = 0
+    frame.Parent = gui
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+    local bar = Instance.new("TextLabel")
+    bar.Size = UDim2.new(1, 0, 0, 30)
+    bar.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+    bar.BorderSizePixel = 0
+    bar.Text = "  Grid Tile (P = Player)"
+    bar.TextColor3 = Color3.new(1, 1, 1)
+    bar.TextXAlignment = Enum.TextXAlignment.Left
+    bar.Font = Enum.Font.GothamBold; bar.TextSize = 14
+    bar.Parent = frame
+    Instance.new("UICorner", bar).CornerRadius = UDim.new(0, 8)
+    local close = Instance.new("TextButton")
+    close.Size = UDim2.fromOffset(30, 30); close.Position = UDim2.new(1, -30, 0, 0)
+    close.BackgroundTransparency = 1; close.Text = "X"
+    close.TextColor3 = Color3.fromRGB(255, 120, 120); close.Font = Enum.Font.GothamBold; close.TextSize = 14
+    close.Parent = bar
+    close.MouseButton1Click:Connect(function() gui.Enabled = false end)
+    -- geser panel
+    local dragging, dragStart, startPos
+    bar.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            dragging, dragStart, startPos = true, i.Position, frame.Position
+            i.Changed:Connect(function() if i.UserInputState == Enum.UserInputState.End then dragging = false end end)
+        end
+    end)
+    UIS.InputChanged:Connect(function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            local d = i.Position - dragStart
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+    table.clear(gridCells)
+    for y = -2, 2 do
+        for x = -2, 2 do
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.fromOffset(44, 44)
+            b.Position = UDim2.fromOffset(6 + (x + 2) * 50, 36 + (y + 2) * 50)
+            b.BorderSizePixel = 0
+            b.Text = (x == 0 and y == 0) and "P" or ""
+            b.TextColor3 = Color3.fromRGB(120, 180, 255)
+            b.Font = Enum.Font.GothamBold; b.TextSize = 18
+            b.AutoButtonColor = true
+            b.Parent = frame
+            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+            if x == 0 and y == 0 then
+                local st = Instance.new("UIStroke", b); st.Color = Color3.fromRGB(120, 180, 255); st.Thickness = 2
+            end
+            local k = x..':'..y
+            gridCells[k] = b
+            b.MouseButton1Click:Connect(function()
+                if targets[k] then targets[k] = nil else targets[k] = {x, y} end
+                refreshGrid()
+            end)
+        end
+    end
+    gui.Enabled = false
+    gridGui = gui
+    refreshGrid()
+end
+buildGrid()
+
+-- ==================================================
+-- MAIN 1. PNB
+-- ==================================================
+local PnB = Main:Section({ Title = "1. PnB (Put and Break)" })
+runToggle(PnB, 'PnB', "Auto PnB (ON / OFF)")
+PnB:Dropdown({
+    Title = "Aksi",
     Values = {"PUT", "BREAK", "CYCLING", "INSTANT"},
     Value = cfg.action,
     Callback = function(v) cfg.action = v end,
 })
-Set:Slider({
+PnB:Slider({
     Title = "Hit / Tile",
     Value = {Min = 1, Max = 50, Default = cfg.hits},
     Callback = function(v) cfg.hits = math.floor(tonumber(v) or 3) end,
 })
-Set:Slider({
-    Title = "Delay Antar Aksi (x0.01 detik)",
-    Value = {Min = 3, Max = 100, Default = math.floor(cfg.delay * 100)},
-    Callback = function(v) cfg.delay = (tonumber(v) or 12) / 100 end,
+PnB:Button({
+    Title = "Buka / Tutup Panel Grid",
+    Desc = "Panel kotak 5x5, klik kotak untuk pilih tile",
+    Callback = function()
+        if not gridGui then buildGrid() end
+        gridGui.Enabled = not gridGui.Enabled
+    end,
 })
-Set:Slider({
-    Title = "Slot Block / Seed (1-9)",
-    Value = {Min = 1, Max = 9, Default = cfg.blockSlot},
-    Callback = function(v) cfg.blockSlot = math.floor(tonumber(v) or 2) end,
+PnB:Button({ Title = "Preset: Depan (kiri+kanan)", Callback = function() setSelection(function(x, y) return y == 0 and x ~= 0 end) end })
+PnB:Button({ Title = "Preset: Baris Bawah", Callback = function() setSelection(function(x, y) return y == 1 end) end })
+PnB:Button({ Title = "Preset: 3x3", Callback = function() setSelection(function(x, y) return math.abs(x) <= 1 and math.abs(y) <= 1 end) end })
+PnB:Button({ Title = "Preset: Semua 5x5", Callback = function() setSelection(function() return true end) end })
+PnB:Button({ Title = "Kosongkan Grid", Callback = function() setSelection(function() return false end) end })
+
+-- ==================================================
+-- MAIN 2. AUTO CLEAR
+-- ==================================================
+local Clr = Main:Section({ Title = "2. Auto Clear" })
+runToggle(Clr, 'Clear', "Auto Clear (ON / OFF)")
+Clr:Dropdown({
+    Title = "Arah Mulai",
+    Values = {"KIRI", "KANAN"},
+    Value = cfg.clearDir,
+    Callback = function(v) cfg.clearDir = v end,
 })
-Set:Slider({
-    Title = "Slot Tangan / Pukul (1-9)",
-    Value = {Min = 1, Max = 9, Default = cfg.fistSlot},
-    Callback = function(v) cfg.fistSlot = math.floor(tonumber(v) or 1) end,
+
+-- ==================================================
+-- MAIN 3. AUTO DF
+-- ==================================================
+local DF = Main:Section({ Title = "3. Auto DF (zigzag)" })
+runToggle(DF, 'DF', "Auto DF (ON / OFF)")
+DF:Dropdown({
+    Title = "Arah Mulai",
+    Values = {"KIRI", "KANAN"},
+    Value = cfg.dfStart,
+    Callback = function(v) cfg.dfStart = v end,
 })
--- Daftar seed otomatis dari ItemDB (kind == "seed")
+DF:Slider({
+    Title = "Slot Platform (1-9)",
+    Value = {Min = 1, Max = 9, Default = cfg.dfPlatSlot},
+    Callback = function(v) cfg.dfPlatSlot = math.floor(tonumber(v) or 3) end,
+})
+DF:Input({
+    Title = "Y Baris Dirt Terakhir",
+    Value = tostring(cfg.dfLastRow),
+    Callback = function(v) local n = tonumber(v); if n and n > 0 then cfg.dfLastRow = math.floor(n) end end,
+})
+DF:Input({
+    Title = "X Platform Ujung Kiri",
+    Value = tostring(cfg.dfLeft),
+    Callback = function(v) local n = tonumber(v); if n and n >= 0 then cfg.dfLeft = math.floor(n) end end,
+})
+DF:Input({
+    Title = "X Platform Ujung Kanan (0 = otomatis)",
+    Value = tostring(cfg.dfRight),
+    Callback = function(v) local n = tonumber(v); if n and n >= 0 then cfg.dfRight = math.floor(n) end end,
+})
+DF:Paragraph({
+    Title = "Syarat",
+    Desc = "Berdiri di atas platform di ujung baris pertama (sisi sesuai Arah Mulai). Slot Block = dirt, Slot Platform = platform kayu.",
+})
+
+-- ==================================================
+-- MAIN 4. PABRIK
+-- ==================================================
+local Fac = Main:Section({ Title = "4. Pabrik (Panen > Break > Tanam)" })
+runToggle(Fac, 'Pabrik', "Auto Pabrik (ON / OFF)")
 local seedValues, seedMap = {}, {}
 for id, it in pairs(ItemDB) do
     if type(it) == 'table' and it.kind == 'seed' then
@@ -755,9 +953,8 @@ for id, it in pairs(ItemDB) do
 end
 table.sort(seedValues)
 if #seedValues == 0 then seedValues = {"(seed tidak ditemukan)"} end
-
 local growInput
-Set:Dropdown({
+Fac:Dropdown({
     Title = "Pilih Seed (waktu tumbuh otomatis)",
     Values = seedValues,
     Value = seedValues[1],
@@ -773,7 +970,7 @@ Set:Dropdown({
         end
     end,
 })
-Set:Dropdown({
+Fac:Dropdown({
     Title = "Satuan field grow di game",
     Values = {"Detik", "Menit", "Milidetik"},
     Value = "Detik",
@@ -782,31 +979,47 @@ Set:Dropdown({
         notify("Satuan", "Pilih ulang seed biar waktu dihitung ulang", 3)
     end,
 })
-growInput = Set:Input({
+growInput = Fac:Input({
     Title = "Waktu Tunggu Panen (detik, bisa diedit)",
     Value = tostring(cfg.growSec),
     Callback = function(v) local n = tonumber(v); if n and n > 0 then cfg.growSec = n end end,
 })
-Set:Dropdown({
-    Title = "Arah Mulai Clear",
-    Values = {"KIRI", "KANAN"},
-    Value = cfg.clearDir,
-    Callback = function(v) cfg.clearDir = v end,
-})
-Set:Toggle({
-    Title = "Pabrik: Break Sisa Setelah Panen",
+Fac:Toggle({
+    Title = "Break Sisa Setelah Panen",
     Value = cfg.factoryBreak,
     Callback = function(on) cfg.factoryBreak = on end,
 })
 
--- 4. FITUR TAMBAHAN
-local Extra = Tab:Section({ Title = "4. Fitur Tambahan" })
-Extra:Toggle({
+-- ==================================================
+-- MAIN 5. PENGATURAN UMUM
+-- ==================================================
+local Gen = Main:Section({ Title = "5. Pengaturan Umum" })
+Gen:Slider({
+    Title = "Delay Antar Aksi (x0.01 detik)",
+    Value = {Min = 3, Max = 100, Default = math.floor(cfg.delay * 100)},
+    Callback = function(v) cfg.delay = (tonumber(v) or 12) / 100 end,
+})
+Gen:Slider({
+    Title = "Slot Block / Seed (1-9)",
+    Value = {Min = 1, Max = 9, Default = cfg.blockSlot},
+    Callback = function(v) cfg.blockSlot = math.floor(tonumber(v) or 2) end,
+})
+Gen:Slider({
+    Title = "Slot Tangan / Pukul (1-9)",
+    Value = {Min = 1, Max = 9, Default = cfg.fistSlot},
+    Callback = function(v) cfg.fistSlot = math.floor(tonumber(v) or 1) end,
+})
+Gen:Toggle({
     Title = "Anti AFK",
     Value = cfg.antiAfk,
     Callback = function(on) cfg.antiAfk = on end,
 })
-Extra:Button({
+Gen:Button({
+    Title = "Stop Semua",
+    Desc = "Hentikan semua fitur dan lepas input",
+    Callback = function() stop("Dihentikan") end,
+})
+Gen:Button({
     Title = "Cek Statistik",
     Desc = "Siklus selesai, item terambil, lama jalan",
     Callback = function()
@@ -814,11 +1027,11 @@ Extra:Button({
         notify("Statistik", string.format("Siklus: %d | Pickup: %d | Jalan: %ds", stats.cycles, observed.pickupPositive, dur), 5)
     end,
 })
-Extra:Button({
+Gen:Button({
     Title = "Reset Statistik",
     Callback = function() stats.cycles = 0; observed.pickupPositive = 0; observed.pickupSerial = 0; notify("Statistik", "Direset", 2) end,
 })
-Extra:Button({
+Gen:Button({
     Title = "Kalibrasi Ulang Posisi",
     Desc = "Pakai kalau klik meleset dari tile",
     Callback = function()
@@ -827,23 +1040,31 @@ Extra:Button({
         notify("Posisi", ok and "Berhasil dikalibrasi" or tostring(err), 3)
     end,
 })
-Extra:Button({
+Gen:Button({
     Title = "Unload Script",
     Callback = function() if _G.ScriptLoaded then _G.ScriptLoaded.Destroy() end end,
 })
 
--- 5. INFO
-local Info = Tab:Section({ Title = "5. Info" })
+-- ==================================================
+-- TAB INFO
+-- ==================================================
+local Info = InfoTab:Section({ Title = "Info" })
+Info:Paragraph({
+    Title = "LITEDIRT " .. VERSION,
+    Desc = "GROWBLOX | Menu: RightShift untuk sembunyikan / tampilkan",
+})
 Info:Paragraph({
     Title = "Cara Pakai",
-    Desc = "1) Pilih tile di Grid (atau preset). Clear tidak butuh grid\n2) Pilih Mode & atur slot\n3) Nyalakan Jalankan\nRightShift = sembunyikan/tampilkan menu",
+    Desc = "Auto DF: berdiri di platform ujung baris pertama, pilih Arah Mulai, nyalakan toggle.\nPnB: buka Panel Grid, pilih tile, pilih Aksi, nyalakan toggle.\nAuto Clear: pilih Arah Mulai, nyalakan toggle (tidak butuh grid).\nPabrik: pilih seed dan slot, nyalakan toggle.\nHanya satu fitur yang bisa aktif sekaligus.",
 })
 
 _G.ScriptLoaded = {
     Destroy = function()
         alive = false
         stop("Unloaded")
+        destroyGrid()
         pcall(function() Window:Destroy() end)
     end
 }
-notify("LITEDIRT", "Loaded", 3)
+notify("LITEDIRT", "Menu siap, memuat data game di latar...", 3)
+task.spawn(runScan)
