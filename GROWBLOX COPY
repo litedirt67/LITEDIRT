@@ -1,19 +1,19 @@
--- LITEDIRT + WindUI ( GROWBLOX ) - FULL FEATURES & GRID KOTAK 5x5
+-- LITEDIRT + WindUI - FULL FEATURES & GRID KOTAK 5x5
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local P = Players.LocalPlayer
 
-for _, n in ipairs({"KENCOT", "LITEDIRT", "Growblox"}) do 
+for _, n in ipairs({"KENCOT", "LITEDIRT", "ScriptLoaded"}) do 
     local old = P.PlayerGui:FindFirstChild(n)
     if old then old:Destroy() end 
 end
 
-if _G.GrowbloxLoaded and _G.GrowbloxLoaded.Destroy then
-    pcall(_G.GrowbloxLoaded.Destroy)
+if _G.ScriptLoaded and _G.ScriptLoaded.Destroy then
+    pcall(_G.ScriptLoaded.Destroy)
 end
-_G.GrowbloxLoaded = nil
+_G.ScriptLoaded = nil
 
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 
@@ -492,7 +492,7 @@ end
 -- WINDUI WINDOW SETUP
 -- ==================================================================
 local Window = WindUI:CreateWindow({
-    Title = "LITEDIRT - Growblox",
+    Title = "LITEDIRT",
     Author = "Full Features WindUI",
     Icon = "sprout",
     Folder = "LitedirtWindUI",
@@ -546,7 +546,6 @@ PnBSection:Toggle({
 
 local GridSection = MainTab:Section({ Title = "Grid Tile 5x5 (Kotak Sekitar Player)" })
 
--- Membuat visualisasi Grid Kotak 5x5 asli persis layout LITEDIRT
 for y = -2, 2 do
     local rowItems = {}
     for x = -2, 2 do
@@ -566,11 +565,9 @@ for y = -2, 2 do
         })
     end
     
-    -- Menjadikan tombol berderet rapi per baris (Kotak 5x5)
     GridSection:Button({
         Title = "Baris Y = "..y.."  (Klik untuk ubah kolom 📁)",
         Callback = function()
-            -- Tombol utama per baris untuk mempermudah akses cepat atau info
             WindUI:Notify({ Title = "Info Baris", Content = "Gunakan tombol di bawah untuk pilih semua/kosongkan.", Duration = 2 })
         end,
     })
@@ -711,7 +708,7 @@ InfoSection:Paragraph({
     Desc = "- **Auto PnB**: Gunakan pilihan grid kotak 5x5 di tab pertama, lalu nyalakan toggle PnB.\n- **Clear World**: Bersihkan world dengan pilihan metode sapuan dan toggle khusus.\n- **Pabrik**: Melakukan tugas berulang (Plant, Harvest, Break & Auto-Collect).\n- **Auto DF**: Membuat pola dirt farm zigzag otomatis.\n- Tekan **RightShift** untuk sembunyikan/tampilkan menu.",
 })
 
-_G.GrowbloxLoaded = {
+_G.ScriptLoaded = {
     Destroy = function()
         stop("Unloaded")
         pcall(function() Window:Destroy() end)
