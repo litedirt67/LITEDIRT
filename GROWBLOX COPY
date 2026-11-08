@@ -1,11 +1,10 @@
--- LITEDIRT + WindUI ( GROWBLOX )
+-- LITEDIRT + WindUI ( GROWBLOX ) - FULL FEATURES
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local P = Players.LocalPlayer
 
--- Bersihkan GUI lama jika ada
 for _, n in ipairs({"KENCOT", "LITEDIRT", "Growblox"}) do 
     local old = P.PlayerGui:FindFirstChild(n)
     if old then old:Destroy() end 
@@ -16,7 +15,6 @@ if _G.GrowbloxLoaded and _G.GrowbloxLoaded.Destroy then
 end
 _G.GrowbloxLoaded = nil
 
--- Load WindUI
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 
 local ItemDB = {}
@@ -48,7 +46,6 @@ do
     end
 end
 
--- Fungsi Game Asli (Punch & SetTile)
 local GF = {}
 local getconsts = (debug and debug.getconstants) or getconstants
 local function hasConsts(fn, want)
@@ -168,7 +165,12 @@ local requestedBlockId
 local walkMode = 'WALK'
 local clearMethod = 'BARIS'
 
--- Pathfinder A* (Diringkas dan dimasukkan agar jalan normal)
+-- Data State untuk UI WindUI
+local PnBState = { active = false }
+local ClearState = { active = false }
+local FactoryState = { active = false, seedId = nil, seedName = "Belum dipilih", growSec = 60, hits = 0, cycles = 0 }
+
+-- Pathfinder A* (Sistem Navigasi Jalan & Lompat)
 local Path = {Bad={}}
 do
     local floor, abs = math.floor, math.abs
@@ -485,66 +487,110 @@ do
     end
 end
 
-local function moveTo(px, py, tol, timeout, dyTol)
-    if walkMode == 'WALK' then
-        if OrigIsDown then
-            Path.goCell(math.floor(px), math.floor(py-.475), 0, math.max(timeout or 10, 10))
-        end
-        return true
-    end
-    local world = debug.getupvalues(positionReader)[6]
-    local done, problem = false, nil
-    task.spawn(function() local ok, err = pcall(world.goTo, px-.5, py-1); if not ok then problem = err end; done = true end)
-    local deadline = os.clock() + 2
-    while not done and active and alive and os.clock() < deadline do task.wait(.01) end
-    return true
-end
-
 -- ==================================================================
 -- WINDUI WINDOW SETUP
 -- ==================================================================
 local Window = WindUI:CreateWindow({
     Title = "LITEDIRT - Growblox",
-    Author = "Converted to WindUI",
+    Author = "Full Features WindUI",
     Icon = "sprout",
     Folder = "LitedirtWindUI",
     ToggleKey = Enum.KeyCode.RightShift,
     Theme = "Dark",
     Transparent = true,
     Resizable = true,
-    Size = UDim2.fromOffset(560, 460),
+    Size = UDim2.fromOffset(600, 480),
 })
 
-local MainTab = Window:Tab({ Title = "PnB & Farm", Icon = "gamepad-2" })
+local MainTab = Window:Tab({ Title = "Auto PnB", Icon = "gamepad-2" })
 local ClearTab = Window:Tab({ Title = "Clear World", Icon = "trash-2" })
+local FactoryTab = Window:Tab({ Title = "Auto DF (Pabrik)", Icon = "factory" })
 local InfoTab = Window:Tab({ Title = "Info", Icon = "info" })
 
--- PnB Section
-local PnBSection = MainTab:Section({ Title = "Auto PnB Settings" })
+-- ==========================================
+-- 1. TAB AUTO PNB & GRID 5x5
+-- ==========================================
+local PnBSection = MainTab:Section({ Title = "Konfigurasi PnB" })
+
 PnBSection:Input({
-    Title = "Hit per Tile",
+    Title = "Hit / Tile",
     Value = tostring(hitsPerTile),
     Callback = function(val)
         local n = tonumber(val)
-        if n then hitsPerTile = n end
+        if n and n >= 1 and n <= 50 then hitsPerTile = n end
     end,
 })
 
 PnBSection:Toggle({
-    Title = "Auto PnB ON / OFF",
+    Title = "Auto PnB (ON / OFF)",
     Value = false,
     Callback = function(on)
+        PnBState.active = on
         if on then
+            if not next(targets) then
+                WindUI:Notify({ Title = "Peringatan", Content = "Pilih tile di grid terlebih dahulu!", Duration = 3 })
+                return
+            end
+            operation = 'PNB'
             active = true
-            WindUI:Notify({ Title = "LITEDIRT", Content = "Auto PnB Enabled", Duration = 2 })
+            bindObservations()
+            findGameFns()
+            WindUI:Notify({ Title = "LITEDIRT", Content = "Auto PnB Berjalan", Duration = 2 })
         else
-            stop("Stopped manually")
+            stop("Auto PnB dihentikan")
         end
     end,
 })
 
--- Clear World Section
-local ClearSection = ClearTab:Section({ Title = "Clear World Controls" })
+local GridSection = MainTab:Section({ Title = "Grid Tile (Pilih Area Sekitar Player)" })
+
+-- Pembuatan Tombol Grid 5x5 secara dinamis di WindUI
+for y = -2, 2 do
+    local rowText = ""
+    for x = -2, 2 do
+        local k = x..':'..y
+        local label = (x == 0 and y == 0) and "[P]" or "[   ]"
+        GridSection:Button({
+            Title = "Tile ("..x..", "..y..") "..(x==0 and y==0 and "(Player)" or ""),
+            Callback = function()
+                if targets[k] then
+                    targets[k] = nil
+                    WindUI:Notify({ Title = "Grid", Content = "Tile ("..x..", "..y..") Dihapus", Duration = 1 })
+                else
+                    targets[k] = {x, y}
+                    WindUI:Notify({ Title = "Grid", Content = "Tile ("..x..", "..y..") Dipilih", Duration = 1 })
+                end
+            end,
+        })
+    end
+end
+
+GridSection:Button({
+    Title = "Pilih Semua Tile Grid",
+    Callback = function()
+        for y = -2, 2 do
+            for x = -2, 2 do
+                targets[x..':'..y] = {x, y}
+            end
+        end
+        WindUI:Notify({ Title = "Grid", Content = "Semua tile dipilih", Duration = 2 })
+    end,
+})
+
+GridSection:Button({
+    Title = "Kosongkan Pilihan Grid",
+    Callback = function()
+        table.clear(targets)
+        WindUI:Notify({ Title = "Grid", Content = "Pilihan tile dikosongkan", Duration = 2 })
+    end,
+})
+
+
+-- ==========================================
+-- 2. TAB CLEAR WORLD (DENGAN TOGGLE)
+-- ==========================================
+local ClearSection = ClearTab:Section({ Title = "Pengaturan Clear World" })
+
 ClearSection:Dropdown({
     Title = "Metode Sapuan",
     Values = {"BARIS", "ULAR", "CLUSTER"},
@@ -554,28 +600,76 @@ ClearSection:Dropdown({
     end,
 })
 
-ClearSection:Button({
-    Title = "Mulai Clear World",
-    Callback = function()
-        if active then WindUI:Notify({ Title = "Error", Content = "Hentikan mode lain dahulu", Duration = 2 }) return end
-        clearRequested = true
-        WindUI:Notify({ Title = "LITEDIRT", Content = "Clear World disiapkan...", Duration = 2 })
+ClearSection:Toggle({
+    Title = "Toggle Auto Clear World (ON / OFF)",
+    Value = false,
+    Callback = function(on)
+        ClearState.active = on
+        if on then
+            if active then
+                WindUI:Notify({ Title = "Error", Content = "Hentikan mode lain yang sedang aktif!", Duration = 2 })
+                return
+            end
+            clearRequested = true
+            operation = 'CLEAR'
+            WindUI:Notify({ Title = "LITEDIRT", Content = "Auto Clear World Diaktifkan", Duration = 2 })
+        else
+            stop("Auto Clear World Dihentikan")
+        end
     end,
 })
 
-ClearSection:Button({
-    Title = "STOP Clear World",
-    Color = Color3.fromHex("#ff4830"),
-    Callback = function()
-        stop("Clear World dihentikan")
+
+-- ==========================================
+-- 3. TAB AUTO DF / PABRIK (PLANT & HARVEST)
+-- ==========================================
+local FactorySection = FactoryTab:Section({ Title = "Pengaturan Auto DF / Pabrik" })
+
+FactorySection:Input({
+    Title = "Waktu Tumbuh (Detik)",
+    Value = "60",
+    Callback = function(val)
+        local n = tonumber(val)
+        if n then FactoryState.growSec = n end
     end,
 })
 
--- Info Section
-local InfoSection = InfoTab:Section({ Title = "Informasi" })
+FactorySection:Input({
+    Title = "Max Hit / Tile (0 = Auto)",
+    Value = "0",
+    Callback = function(val)
+        local n = tonumber(val)
+        if n then FactoryState.hits = n end
+    end,
+})
+
+FactorySection:Toggle({
+    Title = "Toggle Auto DF / Pabrik (ON / OFF)",
+    Value = false,
+    Callback = function(on)
+        FactoryState.active = on
+        if on then
+            if active then
+                WindUI:Notify({ Title = "Error", Content = "Hentikan mode lain dahulu!", Duration = 2 })
+                return
+            end
+            factoryRequested = true
+            operation = 'FACTORY'
+            WindUI:Notify({ Title = "LITEDIRT", Content = "Auto DF / Pabrik Diaktifkan", Duration = 2 })
+        else
+            stop("Auto DF Dihentikan")
+        end
+    end,
+})
+
+
+-- ==========================================
+-- 4. TAB INFO
+-- ==========================================
+local InfoSection = InfoTab:Section({ Title = "Informasi Bantuan" })
 InfoSection:Paragraph({
-    Title = "Tentang Script",
-    Desc = "Skrip LITEDIRT dengan Pathfinder A* yang telah diintegrasikan ke WindUI. Tekan RightShift untuk menyembunyikan/menampilkan menu.",
+    Title = "Panduan Fitur",
+    Desc = "- **Auto PnB**: Pilih tile pada menu Grid, atur hit, lalu aktifkan Toggle Auto PnB.\n- **Clear World**: Pilih metode sapuan lalu nyalakan Toggle Clear World.\n- **Auto DF (Dirt Farm)**: Atur waktu tumbuh pohon lalu nyalakan Toggle Auto DF.\n- Tekan **RightShift** untuk menyembunyikan/menampilkan menu WindUI.",
 })
 
 _G.GrowbloxLoaded = {
@@ -585,4 +679,4 @@ _G.GrowbloxLoaded = {
     end
 }
 
-WindUI:Notify({ Title = "LITEDIRT Loaded", Content = "Tekan RightShift untuk membuka menu.", Duration = 4 })
+WindUI:Notify({ Title = "LITEDIRT Loaded", Content = "Semua fitur aktif! Tekan RightShift.", Duration = 4 })
