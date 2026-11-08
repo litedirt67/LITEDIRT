@@ -1,0 +1,327 @@
+local G = (getgenv and getgenv()) or _G
+for _, key in ipairs({ "__Litedirt67", "__GTFarm", "__KzoyzOpus" }) do
+    if G[key] and G[key].Cleanup then pcall(G[key].Cleanup) end
+    G[key] = nil
+end
+local Session = {}
+G.__Litedirt67 = Session
+local function alive()
+    return G.__Litedirt67 == Session
+end
+
+do
+    local getId = getthreadidentity or get_thread_identity or getidentity or (syn and syn.get_thread_identity)
+    if type(getId) == "function" then pcall(function() Session.Ident = getId() end) end
+    Session.Exec = coroutine.create(function(job)
+        while true do
+            local ok, err = pcall(job)
+            job = coroutine.yield(ok, err)
+        end
+    end)
+end
+
+---------------------------------------------------------------------
+-- SERVICES & MODULE GAME
+---------------------------------------------------------------------
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local VirtualUser = game:GetService("VirtualUser")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local WorldRemotes = ReplicatedStorage:WaitForChild("WorldRemotes")
+local SetTileRemote = WorldRemotes:FindFirstChild("SetTile")
+
+local ItemDB = require(Shared.ItemDB)
+local InventoryModule = require(Shared.Inventory)
+local NetOk, Net = pcall(require, Shared.Net)
+
+local GameGui = PlayerGui:WaitForChild("GameGui")
+local ParticlesOk, ParticlesModule = pcall(require, GameGui:WaitForChild("Particles"))
+local MenuModOk, MenuModule = pcall(require, GameGui:WaitForChild("WorldMenu"))
+local RolesOk, RolesModule = pcall(require, Shared:FindFirstChild("Roles"))
+local SfxOk, SfxModule = pcall(require, Shared:FindFirstChild("Sfx"))
+
+local WindUI = loadstring(game:HttpGet(
+    "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
+))()
+
+---------------------------------------------------------------------
+-- PENGATURAN & DATA
+---------------------------------------------------------------------
+local State = {
+    Running = false,
+    Mode = "Place + Break",
+    PlaceMs = 250,
+    BreakMs = 220,
+    AfterBreakMs = 300,
+    HitsOverride = 0,
+    BreakBackground = true,
+    MultiTarget = 1,
+    SelectedId = nil,
+    Offsets = {},
+    CalibX = 0,
+    CalibY = 0,
+    AntiAfk = true,
+    MutePunch = true,
+    Visual = true,
+    LiteMode = false,
+    AutoCollect = true,
+    CollectAround = false,
+    CollectRadius = 3,
+    CollectMode = "Sentuhan",
+    Override = nil,
+    Quiet = false,
+    Cycles = 0,
+    Placed = 0,
+    Broken = 0,
+    Collected = 0,
+    CollectFail = 0,
+    LastAction = "-",
+    SeedDrop = false,
+    SeedDropAt = 190,
+    SeedKeep = 0,
+    Dropped = 0,
+    DropPause = false,
+}
+
+local Misc = {
+    Speed = 100,
+    InfJump = false,
+    Ghost = false,
+    UpHeld = false,
+    DownHeld = false,
+    CustomName = true,
+    NameText = "Litedirt 67",  -- Diubah menjadi Litedirt 67
+}
+
+local Refs = {
+    World = nil,
+    Inv = nil,
+    SetTile = nil,
+    State = nil,
+    Punch = nil,
+    Particles = {},
+    Menu = nil,
+    Gems = nil,
+    Hud = nil,
+    Trees = nil,
+    Others = nil,
+}
+
+local function findRefs()
+    Refs.World, Refs.Inv, Refs.SetTile, Refs.State, Refs.Punch, Refs.Menu = nil, nil, nil, nil, nil, nil
+    Refs.Gems = nil
+    Refs.Hud = nil
+    Refs.Others = nil
+
+    if not getgc then
+        return false, "Executor tidak punya getgc()"
+    end
+
+    for _, v in ipairs(getgc(true)) do
+        local tv = type(v)
+        if tv == "table" then
+            if not Refs.World then
+                local ok, isWorld = pcall(function()
+                    return type(rawget(v, "fg")) == "table" and type(rawget(v, "bg")) == "table"
+                        and type(rawget(v, "w")) == "number" and type(rawget(v, "h")) == "number"
+                end)
+                if ok and isWorld then Refs.World = v end
+            end
+            if not Refs.Inv then
+                local ok, isInv = pcall(function()
+                    return (getmetatable(v) == InventoryModule or rawget(v, "slots") ~= nil) 
+                        and type(rawget(v, "slots")) == "table"
+                end)
+                if ok and isInv then Refs.Inv = v end
+            end
+        end
+    end
+    return Refs.World ~= nil and Refs.Inv ~= nil
+end
+
+---------------------------------------------------------------------
+-- INVENTORY & ITEM UTILS
+---------------------------------------------------------------------
+local function invCount(id)
+    if not Refs.Inv then 
+        findRefs()
+        if not Refs.Inv then return 0 end
+    end
+    local ok, n = pcall(function() 
+        if type(Refs.Inv.count) == "function" then
+            return Refs.Inv:count(id) 
+        elseif type(Refs.Inv.slots) == "table" then
+            local total = 0
+            for _, slot in pairs(Refs.Inv.slots) do
+                if type(slot) == "table" and slot.id == id then
+                    total = total + (slot.n or slot.amount or 1)
+                end
+            end
+            return total
+        end
+        return 0
+    end)
+    return ok and n or 0
+end
+
+---------------------------------------------------------------------
+-- WATERMARK NAMA LITEDIRT 67
+---------------------------------------------------------------------
+local TextService = game:GetService("TextService")
+local NameFx = { t0 = os.clock() }
+
+local NAME_COLORS = ColorSequence.new({
+    ColorSequenceKeypoint.new(0.00, Color3.fromRGB(170, 90, 255)),
+    ColorSequenceKeypoint.new(0.25, Color3.fromRGB(60, 205, 255)),
+    ColorSequenceKeypoint.new(0.50, Color3.fromRGB(255, 110, 210)),
+    ColorSequenceKeypoint.new(0.75, Color3.fromRGB(60, 205, 255)),
+    ColorSequenceKeypoint.new(1.00, Color3.fromRGB(170, 90, 255)),
+})
+local NAME_FONT = Enum.Font.FredokaOne
+
+local function nameHolders()
+    local gg = PlayerGui:FindFirstChild("GameGui")
+    local world = gg and gg:FindFirstChild("World")
+    local cam = world and world:FindFirstChild("Camera")
+    local chat = PlayerGui:FindFirstChild("ChatGui")
+    local hud = chat and chat:FindFirstChild("HUD")
+    local panel = hud and hud:FindFirstChild("PlayerPanel")
+    return cam and cam:FindFirstChild("NameTag"), panel and panel:FindFirstChild("Name")
+end
+
+local function textWidth(text, size)
+    local ok, v = pcall(TextService.GetTextSize, TextService, text, size, NAME_FONT, Vector2.new(2000, 200))
+    return (ok and v.X or #text * size * 0.55) + 6
+end
+
+local function makeLabel(holder, size, isTag)
+    local lb = Instance.new("TextLabel")
+    lb.Name = "LitedirtName"
+    lb.BackgroundTransparency = 1
+    lb.Font = NAME_FONT
+    lb.TextSize = size
+    lb.TextColor3 = Color3.new(1, 1, 1)
+    lb.Text = Misc.NameText
+    lb.ZIndex = isTag and 1017 or 10
+    if isTag then
+        lb.AnchorPoint = Vector2.new(0.5, 0.5)
+        lb.Position = UDim2.fromScale(0.5, 0.5)
+    else
+        lb.AnchorPoint = Vector2.new(0, 0.5)
+        lb.Position = UDim2.new(0, 3, 0.5, 0)
+        lb.TextXAlignment = Enum.TextXAlignment.Left
+    end
+    local st = Instance.new("UIStroke")
+    st.Thickness = 2
+    st.Color = Color3.fromRGB(25, 12, 40)
+    st.Transparency = 0.1
+    st.Parent = lb
+    local gr = Instance.new("UIGradient")
+    gr.Color = NAME_COLORS
+    gr.Rotation = 12
+    gr.Parent = lb
+    local sc = Instance.new("UIScale")
+    sc.Parent = lb
+    lb.Parent = holder
+    return { holder = holder, bitmap = holder:FindFirstChild("BitmapText"), label = lb, gr = gr, sc = sc,
+        size = size, isTag = isTag, text = nil, w = 0 }
+end
+
+local function dropEntry(e)
+    if not e then return end
+    pcall(function() e.label:Destroy() end)
+    if e.bitmap then pcall(function() e.bitmap.Visible = true end) end
+    if e.isTag and e.bitmap then
+        pcall(function()
+            local bw = e.bitmap.Size.X.Offset
+            e.holder.Size = UDim2.fromOffset(bw, e.holder.Size.Y.Offset)
+            local wr = e.holder:FindFirstChild("Wrench")
+            if wr then wr.Position = UDim2.fromOffset(bw + 4, wr.Position.Y.Offset) end
+        end)
+    end
+end
+
+local function nameKeep(e, holder, size, isTag)
+    if not holder then
+        dropEntry(e)
+        return nil
+    end
+    if not e or e.holder ~= holder or not e.label.Parent then
+        dropEntry(e)
+        e = makeLabel(holder, size, isTag)
+    end
+    if e.text ~= Misc.NameText then
+        e.text = Misc.NameText
+        e.label.Text = Misc.NameText
+        e.w = textWidth(Misc.NameText, size)
+    end
+    if e.bitmap and e.bitmap.Visible then e.bitmap.Visible = false end
+    if isTag then
+        local h = math.max(holder.Size.Y.Offset, size + 6)
+        if e.label.Size.X.Offset ~= e.w or e.label.Size.Y.Offset ~= h then
+            e.label.Size = UDim2.fromOffset(e.w, h)
+        end
+        if holder.Size.X.Offset ~= e.w then
+            holder.Size = UDim2.fromOffset(e.w, holder.Size.Y.Offset)
+        end
+        local wr = holder:FindFirstChild("Wrench")
+        if wr and wr.Position.X.Offset ~= e.w + 4 then
+            wr.Position = UDim2.fromOffset(e.w + 4, wr.Position.Y.Offset)
+        end
+    else
+        e.label.Size = UDim2.new(1, -6, 1, 0)
+    end
+    return e
+end
+
+task.spawn(function()
+    RunService.RenderStepped:Connect(function()
+        if not alive() or not Misc.CustomName then return end
+        local tag, panelName = nameHolders()
+        NameFx.tag = nameKeep(NameFx.tag, tag, 22, true)
+        NameFx.panel = nameKeep(NameFx.panel, panelName, 21, false)
+        local t = os.clock() - NameFx.t0
+        local offset = Vector2.new(((t * 0.45) % 2) - 1, 0)
+        local pulse = 1 + 0.045 * math.sin(t * 3.2)
+        local tg, pn = NameFx.tag, NameFx.panel
+        if tg then
+            tg.gr.Offset = offset
+            tg.sc.Scale = pulse
+        end
+        if pn then
+            pn.gr.Offset = offset
+            pn.sc.Scale = pulse
+        end
+    end)
+end)
+
+---------------------------------------------------------------------
+-- UI WINDOW (LITEDIRT 67)
+---------------------------------------------------------------------
+local Window = WindUI:CreateWindow({
+    Title = "Litedirt 67",
+    Icon = "sprout",
+    Author = "v6.0 | Litedirt 67",
+    Folder = "Litedirt67",
+    Size = UDim2.fromOffset(640, 380),
+    Theme = "Dark",
+    Transparent = true,
+    SideBarWidth = 150,
+    ToggleKey = Enum.KeyCode.Insert,
+})
+
+pcall(function()
+    Window:EditOpenButton({
+        Title = "Litedirt 67",
+        Icon = "sprout",
+        Draggable = true,
+        OnlyMobile = false,
+    })
+end)
+
+print("[Litedirt 67] Berhasil dimuat dan Inventory siap terbaca!")
