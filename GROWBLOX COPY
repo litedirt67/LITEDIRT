@@ -1,4 +1,1321 @@
-ck=os.clock()
+-- LITEDIRT ( GROWBLOX ): put all, then break all; upper tile enabled.
+local P=game:GetService('Players').LocalPlayer
+local U=game:GetService('UserInputService')
+local V=game:GetService('VirtualInputManager')
+for _,n in ipairs({'KENCOT','LITEDIRT'})do local old=P.PlayerGui:FindFirstChild(n);if old then old:Destroy() end end
+local function obj(c,p,t)local o=Instance.new(c);for k,v in pairs(t)do o[k]=v end;o.Parent=p;return o end
+local ItemDB={}
+do
+ local ok,m=pcall(function()return require(game:GetService('ReplicatedStorage'):WaitForChild('Shared',5):WaitForChild('ItemDB',5))end)
+ if ok and type(m)=='table' then ItemDB=m end
+end
+local AutoInput={active=false,left=false,right=false,jump=false,down=false}
+local OrigIsDown,MenuMod
+do
+ local okM,mod=pcall(function()return require(P.PlayerGui:WaitForChild('GameGui',5):WaitForChild('WorldMenu',5))end)
+ if okM and type(mod)=='table' and type(rawget(mod,'isDown'))=='function' then
+  local env=type(getgenv)=='function' and getgenv() or _G
+  local cur=rawget(mod,'isDown')
+  if env.__LD_WRAP and env.__LD_WRAP==cur and env.__LD_ORIG then cur=env.__LD_ORIG end
+  OrigIsDown,MenuMod=cur,mod
+  local function wrap(saved,key,...)
+   if AutoInput.active then
+    if key=='keyLeft' then return AutoInput.left end
+    if key=='keyRight' then return AutoInput.right end
+    if key=='keyJump' then return AutoInput.jump end
+    if key=='keyDown' then return AutoInput.down end
+   end
+   return OrigIsDown(saved,key,...)
+  end
+  mod.isDown=wrap
+  env.__LD_WRAP,env.__LD_ORIG=wrap,cur
+ end
+end
+-- Fungsi asli game untuk memukul & memasang block (dicari lewat konstanta fungsinya)
+local GF={}
+local getconsts=(debug and debug.getconstants) or getconstants
+local function hasConsts(fn,want)
+ if not getconsts then return false end
+ if islclosure and not islclosure(fn) then return false end
+ local ok,c=pcall(getconsts,fn)
+ if not ok or type(c)~='table' then return false end
+ local hit={}
+ for _,k in pairs(c)do if want[k] then hit[want[k]]=true end end
+ return hit
+end
+local function isSetTileFn(fn)
+ local h=hasConsts(fn,{tile='send',SetTile='send',placedAt='placed',flips='flips'})
+ return h and h.send and h.placed and h.flips
+end
+local function isPunchFn(fn)
+ local h=hasConsts(fn,{['Empty the Vending Machine first!']='vend',newCrack='mark',HarvestProvider='mark'})
+ return h and h.vend and h.mark
+end
+local function isGameFn(fn)
+ if fn==isSetTileFn or fn==isPunchFn or fn==hasConsts then return false end
+ if isexecutorclosure then
+  local ok,res=pcall(isexecutorclosure,fn)
+  if ok and res then return false end
+ end
+ local ok,s=pcall(debug.info,fn,'s')
+ if ok and type(s)=='string' and s~='' and not string.find(s,'GameGui',1,true) then return false end
+ return true
+end
+local function findGameFns()
+ if (GF.punch and GF.setTile) or not (getgc and getconsts) then return end
+ for _,v in ipairs(getgc(true))do
+  if type(v)=='function' and isGameFn(v) then
+   if not GF.setTile and isSetTileFn(v) then GF.setTile=v
+   elseif not GF.punch and isPunchFn(v) then GF.punch=v end
+   if GF.setTile and GF.punch then break end
+  end
+ end
+end
+local g=obj('ScreenGui',P.PlayerGui,{Name='LITEDIRT',ResetOnSpawn=false,DisplayOrder=1000})
+local blue=Color3.fromRGB(66,128,245);local gray=Color3.fromRGB(40,45,60)
+local edge=Color3.fromRGB(80,92,130)
+local function stroke(o,c,t,a)return obj('UIStroke',o,{Color=c or edge,Thickness=t or 1,Transparency=a or .5,ApplyStrokeMode=Enum.ApplyStrokeMode.Border})end
+local f=obj('Frame',g,{Size=UDim2.fromOffset(540,440),Position=UDim2.new(.5,-270,.5,-220),BackgroundColor3=Color3.new(1,1,1),BorderSizePixel=0})
+obj('UICorner',f,{CornerRadius=UDim.new(0,14)})
+obj('UIGradient',f,{Rotation=90,Color=ColorSequence.new(Color3.fromRGB(26,30,44),Color3.fromRGB(14,16,24))})
+stroke(f,Color3.fromRGB(100,120,190),1.5,.25)
+local function card(x,y,w,h,keep)
+ local c=obj('Frame',f,{Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundColor3=Color3.fromRGB(28,32,46),BorderSizePixel=0})
+ obj('UICorner',c,{CornerRadius=UDim.new(0,10)});stroke(c,edge,1,.55)
+ if keep then c:SetAttribute('keep',true) end
+ return c
+end
+do
+ local header=obj('Frame',f,{Size=UDim2.new(1,0,0,46),BackgroundColor3=Color3.fromRGB(20,23,35),BorderSizePixel=0})
+ obj('UICorner',header,{CornerRadius=UDim.new(0,14)})
+ obj('Frame',header,{Position=UDim2.new(0,0,1,-14),Size=UDim2.new(1,0,0,14),BackgroundColor3=Color3.fromRGB(20,23,35),BorderSizePixel=0})
+ local accent=obj('Frame',f,{Position=UDim2.fromOffset(0,46),Size=UDim2.new(1,0,0,2),BackgroundColor3=Color3.new(1,1,1),BorderSizePixel=0})
+ obj('UIGradient',accent,{Color=ColorSequence.new(Color3.fromRGB(66,128,245),Color3.fromRGB(150,90,255))})
+ header:SetAttribute('keep',true);accent:SetAttribute('keep',true)
+ card(8,54,106,94,true)  -- kategori
+ card(8,154,106,200)     -- hit / slot
+ card(120,50,408,50)     -- petunjuk
+ card(120,102,215,250)   -- grid tile
+ card(337,102,191,250)   -- block & ON/OFF
+ card(120,356,408,76)    -- status
+end
+local function text(s,x,y,w,h)return obj('TextLabel',f,{Text=s,Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundTransparency=1,TextColor3=Color3.fromRGB(228,233,248),TextSize=14,Font=Enum.Font.Gotham,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left})end
+local function btn(s,x,y,w,h)
+ local b=obj('TextButton',f,{Text=s,Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundColor3=gray,TextColor3=Color3.new(1,1,1),TextSize=13,Font=Enum.Font.GothamBold,BorderSizePixel=0})
+ obj('UICorner',b,{CornerRadius=UDim.new(0,7)})
+ if s=='X' then b.BackgroundColor3=Color3.fromRGB(190,60,65) end
+ local st=stroke(b,Color3.fromRGB(110,125,175),1,.7)
+ b.MouseEnter:Connect(function()st.Transparency=.1 end)
+ b.MouseLeave:Connect(function()st.Transparency=.7 end)
+ return b
+end
+local title=text('LITEDIRT ( GROWBLOX )',18,8,440,34);title.TextSize=20;title.Font=Enum.Font.GothamBold;title.TextYAlignment=Enum.TextYAlignment.Center;title.Active=true
+local pnbCategory=btn('PnB',12,60,95,26);pnbCategory.BackgroundColor3=blue
+text('Pilih tile di sekitar player',126,54,390,24)
+text('Biru = dipilih | P = player',126,80,390,22)
+local blockInfo=text('Block: slot pilihan | Tangan: 1',343,110,175,40)
+local on=btn('ON',343,234,83,40);local off=btn('OFF',435,234,83,40)
+on.BackgroundColor3=Color3.fromRGB(46,160,90);off.BackgroundColor3=Color3.fromRGB(190,60,65)
+local status=text('Posisi tile otomatis. Pilih tile lalu ON / F7. F8 stop.',126,360,392,65)
+text('Collect PnB: ON',343,322,175,25)
+local targets,boxes,cons={},{},{}
+local hitsPerTile=3
+local farmSlot=2
+local slotKeys={Enum.KeyCode.One,Enum.KeyCode.Two,Enum.KeyCode.Three,Enum.KeyCode.Four,Enum.KeyCode.Five,Enum.KeyCode.Six,Enum.KeyCode.Seven,Enum.KeyCode.Eight,Enum.KeyCode.Nine}
+text('Slot block',18,293,86,24)
+local slotBox=obj('TextBox',f,{Text='2',Position=UDim2.fromOffset(18,321),Size=UDim2.fromOffset(82,32),BackgroundColor3=gray,TextColor3=Color3.new(1,1,1),Font=Enum.Font.Gotham,TextSize=15,ClearTextOnFocus=false})
+obj('UICorner',slotBox,{CornerRadius=UDim.new(0,6)})
+stroke(slotBox)
+slotBox.FocusLost:Connect(function()
+ local n=tonumber(slotBox.Text)
+ if n and n==math.floor(n) and n>=2 and n<=9 then farmSlot=n end
+ slotBox.Text=tostring(farmSlot)
+end)
+text('Hit / tile',18,154,86,24)
+local hitBox=obj('TextBox',f,{Text='3',Position=UDim2.fromOffset(18,184),Size=UDim2.fromOffset(82,32),BackgroundColor3=gray,TextColor3=Color3.new(1,1,1),Font=Enum.Font.Gotham,TextSize=15,ClearTextOnFocus=false})
+obj('UICorner',hitBox,{CornerRadius=UDim.new(0,6)})
+stroke(hitBox)
+text('Hit dari DB\nSlot auto: 2\nPut: 1 klik',18,224,88,58)
+hitBox.FocusLost:Connect(function()
+ local n=tonumber(hitBox.Text)
+ if n and n==math.floor(n) and n>=1 and n<=50 then hitsPerTile=n end
+ hitBox.Text=tostring(hitsPerTile)
+end)
+local dragging,dragInput,dragStart,frameStart
+cons[#cons+1]=title.InputBegan:Connect(function(input)
+ if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+  dragging=true;dragInput=input;dragStart=input.Position;frameStart=f.Position
+ end
+end)
+cons[#cons+1]=U.InputChanged:Connect(function(input)
+ if not dragging then return end
+ if input.UserInputType==Enum.UserInputType.MouseMovement or input==dragInput then
+  local delta=input.Position-dragStart
+  f.Position=UDim2.new(frameStart.X.Scale,frameStart.X.Offset+delta.X,frameStart.Y.Scale,frameStart.Y.Offset+delta.Y)
+ end
+end)
+cons[#cons+1]=U.InputEnded:Connect(function(input)
+ if input==dragInput or input.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false;dragInput=nil end
+end)
+cons[#cons+1]=U.WindowFocusReleased:Connect(function()dragging=false;dragInput=nil end)
+local cycleCount=0
+local hud=obj('Frame',g,{Name='RunningStatus',Size=UDim2.fromOffset(330,90),Position=UDim2.fromOffset(12,150),BackgroundColor3=Color3.fromRGB(23,26,36),Visible=false,BorderSizePixel=0})
+obj('UICorner',hud,{CornerRadius=UDim.new(0,8)})
+stroke(hud,Color3.fromRGB(100,120,190),1.5,.25)
+local hudText=obj('TextLabel',hud,{Position=UDim2.fromOffset(10,5),Size=UDim2.fromOffset(235,80),BackgroundTransparency=1,TextColor3=Color3.new(1,1,1),Font=Enum.Font.Gotham,TextSize=12,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left})
+local hudStop=obj('TextButton',hud,{Text='STOP',Position=UDim2.fromOffset(250,25),Size=UDim2.fromOffset(70,36),BackgroundColor3=Color3.fromRGB(190,60,65),TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=13,BorderSizePixel=0})
+obj('UICorner',hudStop,{CornerRadius=UDim.new(0,6)})
+local function updateHud()
+ hudText.Text=string.format('LITEDIRT | Siklus selesai: %d\n%s\nF8 untuk berhenti',cycleCount,status.Text)
+end
+cons[#cons+1]=status:GetPropertyChangedSignal('Text'):Connect(updateHud)
+updateHud()
+local alive,active,held=true,false,false
+local clearAim
+local operation='PNB'
+local clearRequested=false
+local factoryRequested=false
+local minimized=false
+local runMode='BOTH'
+local origin,step,last=nil,nil,Vector2.zero
+local function release()if held then held=false;pcall(function()V:SendMouseButtonEvent(last.X,last.Y,0,false,game,0)end)end end
+local function stop(s)if clearAim then clearAim.Visible=false end;clearRequested=false;factoryRequested=false;active=false;AutoInput.active=false;AutoInput.left=false;AutoInput.right=false;AutoInput.jump=false;release();hud.Visible=false;f.Visible=not minimized;status.Text=s or 'OFF' end
+local positionReader
+local pointerCorrection=Vector2.zero
+local pointerGeometryKey
+local function autoPosition()
+ assert(type(getgc)=='function' and debug and type(debug.getupvalues)=='function','Pembacaan posisi otomatis tidak tersedia')
+ if not positionReader then
+  for _,fn in ipairs(getgc())do if type(fn)=='function' then
+   local ok,u=pcall(debug.getupvalues,fn)
+   if ok and u[1]==game:GetService('Players') and type(u[6])=='table' and type(u[6].fg)=='table' and type(u[6].bg)=='table'
+    and type(u[2])=='number' and type(u[4])=='number' and type(u[5])=='number' and type(u[7])=='number' and type(u[8])=='number'
+    and type(u[14])=='table' and type(u[14].select)=='function' and type(u[35])=='function' then
+    positionReader=fn;break
+   end
+  end end
+ end
+ assert(positionReader,'Posisi otomatis: Game.act tidak ditemukan')
+ local u=debug.getupvalues(positionReader)
+ local gg=P.PlayerGui:FindFirstChild('GameGui');local w=gg and gg:FindFirstChild('World');local c=w and w:FindFirstChild('Camera')
+ assert(c,'Camera GUI tidak ditemukan')
+ local uiScale=c:FindFirstChildOfClass('UIScale')
+ local scale=uiScale and uiScale.Scale or 1
+ step=u[4]*scale
+ local inset=game:GetService('GuiService'):GetGuiInset()
+ local viewport=workspace.CurrentCamera.ViewportSize
+ local key=string.format('%.5f:%d:%d:%.1f:%.1f',step,viewport.X,viewport.Y,inset.X,inset.Y)
+ if pointerGeometryKey~=key then pointerGeometryKey=key;pointerCorrection=Vector2.zero end
+ local px,py=math.floor(u[7]),math.floor(u[8]-.475)
+ origin=w.AbsolutePosition+inset+pointerCorrection+Vector2.new((px+.5-u[2])*step,(py+.5-u[5])*step)
+end
+local ensureFarm, farmBinding, farmId, refillFarm
+local farmHome
+local observed={tiles={},pickupSerial=0,pickupPositive=0}
+local function bindObservations()
+ local ns
+ for _,value in ipairs(getgc(true))do
+  if type(value)=='table' then
+   local took=rawget(value,'took');local tile=rawget(value,'tileChanged')
+   if type(took)=='table' and type(tile)=='table' and type(took.listen)=='function' and type(tile.listen)=='function'
+    and type(rawget(value,'take'))=='table' and type(rawget(value,'move'))=='table' and type(rawget(value,'worldTag'))=='function' then ns=value;break end
+  end
+ end
+ assert(ns,'Tidak dapat membaca packet took/tileChanged; verifikasi belum tersedia')
+ local env=type(getgenv)=='function' and getgenv() or _G
+ local registry=env.__KENCOT_PACKET_OBSERVER
+ if not registry or registry.namespace~=ns then
+  registry={namespace=ns}
+  env.__KENCOT_PACKET_OBSERVER=registry
+  ns.took.listen(function(packet)
+   local target=registry.target
+   if not target then return end
+   target.pickupSerial=target.pickupSerial+1
+   if type(packet.got)=='number' and packet.got>0 then target.pickupPositive=target.pickupPositive+packet.got end
+  end)
+  ns.tileChanged.listen(function(packet)
+   local target=registry.target
+   if target then target.tiles[tostring(packet.w)..':'..packet.layer..':'..packet.x..':'..packet.y]={id=packet.id,time=os.clock()} end
+  end)
+ end
+ if not registry.legacyConnection then
+  local remotes=game:GetService('ReplicatedStorage'):FindFirstChild('WorldRemotes')
+  local remote=remotes and remotes:FindFirstChild('TileChanged')
+  if remote and remote:IsA('RemoteEvent')then
+   registry.legacyConnection=remote.OnClientEvent:Connect(function(layer,x,y,id)
+    local target=registry.target
+    if not target or not target.worldName then return end
+    local layerId=layer=='bg' and 2 or layer=='fg' and 1 or tonumber(layer)
+    if not layerId then return end
+    local w=ns.worldTag(target.worldName)
+    target.tiles[tostring(w)..':'..layerId..':'..x..':'..y]={id=id,time=os.clock(),source='legacy'}
+   end)
+  end
+ end
+ registry.target=observed
+ observed.worldTag=ns.worldTag
+end
+local modeButtons={}
+local function chooseMode(mode)
+ stop('OFF - mode '..mode)
+ runMode=mode
+ for name,b in pairs(modeButtons)do b.BackgroundColor3=name==mode and blue or gray end
+end
+for index,entry in ipairs({{'PUT','Put'},{'BREAK','Break'},{'BOTH','Both'}})do
+ local b=btn(entry[2],343+(index-1)*60,285,55,30)
+ modeButtons[entry[1]]=b
+ b.BackgroundColor3=entry[1]==runMode and blue or gray
+ b.Activated:Connect(function()chooseMode(entry[1])end)
+end
+local function begin()
+ if active then return end
+ operation='PNB'
+ if not next(targets)then status.Text='Pilih tile dahulu';return end
+  local ok,err=pcall(function()
+  bindObservations()
+  findGameFns()
+  if runMode~='BREAK' then ensureFarm(true,true) end
+  V:SendKeyEvent(true,slotKeys[farmSlot],false,game)
+  V:SendKeyEvent(false,slotKeys[farmSlot],false,game)
+  task.wait(.15)
+  autoPosition()
+ end)
+ if not ok then status.Text='OFF - '..tostring(err);return end
+ local start=debug.getupvalues(positionReader)
+ farmHome={start[7],start[8],name=start[6].name}
+ observed.worldName=farmHome.name
+ active=true;updateHud();hud.Visible=true
+ status.Text='Mode: '..((GF.punch and GF.setTile) and 'fungsi game (tanpa klik)' or 'klik layar')
+end
+for y=-2,2 do for x=-2,2 do
+ local k=x..':'..y;local center=x==0 and y==0
+ local b=btn(center and 'P' or '',126+(x+2)*40,110+(y+2)*40,35,35);boxes[k]=b
+ b.Activated:Connect(function()targets[k]=not targets[k] and {x,y} or nil;b.BackgroundColor3=targets[k] and blue or gray end)
+end end
+btn('Pilih semua',126,315,94,30).Activated:Connect(function()for y=-2,2 do for x=-2,2 do local k=x..':'..y;targets[k]={x,y};boxes[k].BackgroundColor3=blue end end end)
+btn('Kosongkan',228,315,94,30).Activated:Connect(function()table.clear(targets);for _,b in pairs(boxes)do b.BackgroundColor3=gray end end)
+local requestedBlockId
+local selectedLabel=text('Belum pilih block',343,154,175,30)
+local search=btn('Daftar block',343,190,175,32)
+local function inventoryBinding()
+ assert(type(getgc)=='function' and debug and type(debug.getupvalues)=='function','API pembacaan inventory tidak tersedia')
+ local inventoryGui=P.PlayerGui:FindFirstChild('InventoryGui')
+ assert(inventoryGui,'InventoryGui belum tersedia; tunggu backpack selesai dimuat')
+ local function hotbarLike(t,db)
+  if type(t)~='table'then return false end
+  for k,v in pairs(t)do
+   if type(k)~='number' or k<1 or k>3 or k~=math.floor(k)then return false end
+   if v~=false then
+    local item=type(v)=='number' and rawget(db,v)
+    if type(item)~='table' or item.kind=='tool' or item.kind=='cloth' then return false end
+   end
+  end
+  return true
+ end
+ local binding
+ for _,fn in ipairs(getgc())do
+  if type(fn)=='function'then
+   local ok,u=pcall(debug.getupvalues,fn)
+   if ok then
+    local api,db,inv,guiMatch
+    for _,v in pairs(u)do
+     if type(v)=='table'then
+      if rawget(v,'refresh')==fn then api=v end
+      local blank,dirt=rawget(v,0),rawget(v,2)
+      if type(blank)=='table' and type(dirt)=='table' and dirt.name=='Dirt' then db=v end
+      local valid,answer=pcall(function()return type(rawget(v,'slots'))=='table' and type(v.count)=='function' and type(v.select)=='function'end)
+      if valid and answer then inv=v end
+      local first=rawget(v,1)
+      if type(first)=='table' then
+       local button=rawget(first,'button')
+       if typeof(button)=='Instance' and button:IsDescendantOf(inventoryGui)then guiMatch=true end
+      end
+     end
+    end
+    if api and db and inv and guiMatch then
+     local hotbar
+     if u[2]==inv and u[3]==db and hotbarLike(u[4],db)then
+      hotbar=u[4]
+     elseif u[4]==db and u[5]==inv and hotbarLike(u[3],db)then
+      hotbar=u[3]
+     else
+      for _,candidateFn in ipairs(getgc())do
+       if type(candidateFn)=='function'then
+        local success,v=pcall(debug.getupvalues,candidateFn)
+        if success and v[1]==db and hotbarLike(v[2],db) and v[3]==nil then
+         local shared=false
+         for _,value in pairs(u)do if value==v[2]then shared=true;break end end
+         if shared then
+          assert(not hotbar or hotbar==v[2],'Struktur hotbar tidak unik; binding dibatalkan')
+          hotbar=v[2]
+         end
+        end
+       end
+      end
+     end
+     if hotbar then
+      assert(not binding,'Beberapa inventory aktif ditemukan; masuk ulang world')
+      binding={refresh=fn,hotbar=hotbar,db=db,inv=inv}
+     end
+    end
+   end
+  end
+ end
+ assert(binding,'Inventory aktif belum ditemukan. Buka backpack, tunggu sebentar, lalu coba Daftar block lagi.')
+ return binding
+end
+ensureFarm=function(force,allowEmpty)
+  local inventoryGui=P.PlayerGui:FindFirstChild('InventoryGui')
+  if not farmBinding or farmBinding.gui~=inventoryGui then farmBinding=inventoryBinding();farmBinding.gui=inventoryGui end
+  local b=farmBinding
+  local id=requestedBlockId
+  assert(id,'Pilih block dari daftar dahulu')
+  local item=b.db[id]
+  assert(item and type(item.hits)=='number' and item.hits>0,'Block ini tidak dapat dihancurkan dengan pukulan normal')
+  if b.inv:count(id)<=0 and not allowEmpty then
+   assert(active and refillFarm,'Refill belum siap; tekan ON')
+   refillFarm(id)
+   if not active or not alive then return end
+   assert(b.inv:count(id)>0,'Refill gagal: drop block pilihan tidak tersedia')
+  end
+  if force or b.hotbar[1]~=id then
+  local saved={b.hotbar[1],b.hotbar[2],b.hotbar[3]}
+  local replacement={id}
+  for i=1,3 do local v=saved[i];if v and v~=id and not table.find(replacement,v)then replacement[#replacement+1]=v end end
+  for i=1,3 do b.hotbar[i]=replacement[i] or false end
+  local function notifyInventory()
+   local event=b.inv.changed
+   assert(typeof(event)=='Instance' and event:IsA('BindableEvent'),'Inventory.changed bukan BindableEvent')
+   event:Fire()
+  end
+  local refreshed,problem=pcall(notifyInventory)
+  if not refreshed then
+   for i=1,3 do b.hotbar[i]=saved[i] or false end
+   pcall(notifyInventory);error(problem)
+  end
+  end
+  farmSlot=2;slotBox.Text='2'
+  if farmId~=id then hitsPerTile=math.max(1,math.floor(item.hits));hitBox.Text=tostring(hitsPerTile) end
+  farmId=id
+  selectedLabel.Text=item.name;blockInfo.Text=string.format('%s | %s | %d hit',item.name,item.background and 'BG' or 'FG',hitsPerTile)
+  return b,id
+end
+local picker=obj('Frame',g,{Name='BlockPicker',Size=UDim2.fromOffset(400,350),Position=UDim2.new(.5,-200,.5,-175),BackgroundColor3=Color3.fromRGB(23,26,36),Visible=false,BorderSizePixel=0,ZIndex=20})
+obj('UICorner',picker,{CornerRadius=UDim.new(0,10)})
+stroke(picker,Color3.fromRGB(100,120,190),1.5,.25)
+obj('TextLabel',picker,{Text='Semua block di game',Position=UDim2.fromOffset(12,8),Size=UDim2.fromOffset(330,30),BackgroundTransparency=1,TextColor3=Color3.new(1,1,1),TextSize=16,Font=Enum.Font.GothamBold,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=21})
+local pickerClose=obj('TextButton',picker,{Text='X',Position=UDim2.fromOffset(360,9),Size=UDim2.fromOffset(28,28),BackgroundColor3=gray,TextColor3=Color3.new(1,1,1),ZIndex=21})
+local filter=obj('TextBox',picker,{Text='',PlaceholderText='Cari nama block (opsional)',Position=UDim2.fromOffset(12,47),Size=UDim2.fromOffset(376,30),BackgroundColor3=gray,TextColor3=Color3.new(1,1,1),Font=Enum.Font.Gotham,TextSize=13,ClearTextOnFocus=false,ZIndex=21})
+local scroll=obj('ScrollingFrame',picker,{Position=UDim2.fromOffset(12,87),Size=UDim2.fromOffset(376,248),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=5,CanvasSize=UDim2.new(),ZIndex=21})
+local layout=obj('UIListLayout',scroll,{Padding=UDim.new(0,4),SortOrder=Enum.SortOrder.LayoutOrder})
+local entries={}
+local function applyFilter()
+ local q=string.lower(filter.Text)
+ for _,row in ipairs(entries)do row.button.Visible=q=='' or string.find(row.name,q,1,true)~=nil end
+ scroll.CanvasPosition=Vector2.zero
+ task.defer(function()if alive then scroll.CanvasSize=UDim2.fromOffset(0,layout.AbsoluteContentSize.Y+5)end end)
+end
+filter:GetPropertyChangedSignal('Text'):Connect(applyFilter)
+layout:GetPropertyChangedSignal('AbsoluteContentSize'):Connect(function()scroll.CanvasSize=UDim2.fromOffset(0,layout.AbsoluteContentSize.Y+5)end)
+pickerClose.Activated:Connect(function()picker.Visible=false end)
+search.Activated:Connect(function()
+ stop('Memuat daftar inventory...')
+ local ok,err=pcall(function()
+  local b=inventoryBinding();farmBinding=b;b.gui=P.PlayerGui:FindFirstChild('InventoryGui')
+  for _,row in ipairs(entries)do row.button:Destroy()end
+  table.clear(entries)
+  local ids={}
+  for id,item in pairs(b.db)do
+   if type(id)=='number' and type(item)=='table' and item.atlas and (item.kind==nil or item.kind=='block') then ids[id]=true end
+  end
+  local sorted={};for id in pairs(ids)do sorted[#sorted+1]=id end
+  table.sort(sorted,function(leftId,rightId)
+   local leftName=string.lower(b.db[leftId].name or '')
+   local rightName=string.lower(b.db[rightId].name or '')
+   if leftName==rightName then return leftId<rightId end
+   return leftName<rightName
+  end)
+  for index,id in ipairs(sorted)do
+   local item=b.db[id]
+   local row=obj('TextButton',scroll,{Text=string.format('%s | x%d | %d hit | %s',item.name,b.inv:count(id),item.hits or 0,item.background and 'BG' or 'FG'),Size=UDim2.new(1,-8,0,38),BackgroundColor3=gray,TextColor3=Color3.new(1,1,1),TextSize=12,Font=Enum.Font.Gotham,TextWrapped=true,LayoutOrder=index,ZIndex=22})
+   obj('UICorner',row,{CornerRadius=UDim.new(0,5)})
+   stroke(row,edge,1,.7)
+   entries[#entries+1]={button=row,name=string.lower(item.name or '')}
+   row.Activated:Connect(function()
+    requestedBlockId=id
+    if (item.hits or 0)>0 then hitsPerTile=math.floor(item.hits);hitBox.Text=tostring(hitsPerTile) end
+    selectedLabel.Text=item.name
+    blockInfo.Text=string.format('%s | %s | %d hit',item.name,item.background and 'BG' or 'FG',item.hits or 0)
+    picker.Visible=false
+    if (item.hits or 0)<=0 then status.Text='OFF - block dipilih tidak bisa dihancurkan normal'
+    elseif b.inv:count(id)<=0 then status.Text='OFF - '..item.name..' dipilih. Stok 0.'
+    else status.Text='OFF - '..item.name..' dipilih. ON otomatis pasang ke slot 2.' end
+   end)
+  end
+  assert(#sorted>0,'Daftar block ItemDB tidak tersedia')
+  picker.Visible=true;filter.Text='';applyFilter()
+  status.Text='OFF - pilih block dari seluruh ItemDB'
+ end)
+ if not ok then status.Text='OFF - '..tostring(err) end
+end)
+
+hudStop.Activated:Connect(function()stop('OFF - tombol STOP')end)
+on.Activated:Connect(begin);off.Activated:Connect(function()stop()end)
+btn('X',494,12,30,28).Activated:Connect(function()g:Destroy()end)
+cons[#cons+1]=U.InputBegan:Connect(function(i,processed)
+ if i.KeyCode==Enum.KeyCode.F8 then stop('OFF - F8');return end
+ if processed or U:GetFocusedTextBox()then return end
+ if i.KeyCode==Enum.KeyCode.F7 then begin()
+ elseif i.KeyCode==Enum.KeyCode.F6 then
+  stop();local anchor,n=nil,0;for _,v in pairs(targets)do anchor=v;n=n+1 end
+  if n~=1 then status.Text='Kalibrasi: pilih tepat SATU tile';return end
+  local gg=P.PlayerGui:FindFirstChild('GameGui');local w=gg and gg:FindFirstChild('World');local c=w and w:FindFirstChild('Camera')
+  step=nil;if c then for _,v in ipairs(c:GetChildren())do if v.Name=='BuildBox' and v:IsA('GuiObject') and v.AbsoluteSize.X>0 then step=v.AbsoluteSize.X;break end end end
+  if not step then status.Text='BuildBox tidak ditemukan';return end
+  origin=U:GetMouseLocation()-Vector2.new(anchor[1]*step,anchor[2]*step)
+  status.Text='Kalibrasi siap. Pilih tile tambahan lalu F7. F8 stop.'
+ end
+end)
+g.Destroying:Connect(function()alive=false;active=false;AutoInput.active=false;release();local env=type(getgenv)=='function' and getgenv() or _G;if MenuMod and OrigIsDown and rawget(MenuMod,'isDown')==env.__LD_WRAP then MenuMod.isDown=OrigIsDown end;for _,c in ipairs(cons)do c:Disconnect()end end)
+local function waitFor(s)local t=os.clock()+s;repeat task.wait(.01)until not alive or not active or os.clock()>=t;return alive and active end
+
+local walkKeys={left=Enum.KeyCode.A,right=Enum.KeyCode.D,jump=Enum.KeyCode.Space}
+local walkMode='WALK'
+local walkBtns={}
+local heldDir=0
+local function setDir(d)
+ if OrigIsDown then
+  AutoInput.active=true;AutoInput.left=d==-1;AutoInput.right=d==1;heldDir=d
+  return
+ end
+ if heldDir==d then return end
+ if heldDir==-1 then V:SendKeyEvent(false,walkKeys.left,false,game) elseif heldDir==1 then V:SendKeyEvent(false,walkKeys.right,false,game) end
+ heldDir=d
+ if d==-1 then V:SendKeyEvent(true,walkKeys.left,false,game) elseif d==1 then V:SendKeyEvent(true,walkKeys.right,false,game) end
+end
+local function walkLabel()return walkMode=='WALK' and 'Gerak: Jalan' or 'Gerak: Cepat (goTo)' end
+local function toggleWalk()
+ walkMode=walkMode=='WALK' and 'FAST' or 'WALK'
+ for _,b in ipairs(walkBtns)do b.Text=walkLabel() end
+end
+local function walkTo(tx,ty,tol,timeout,dyTol)
+ tol=tol or .3;dyTol=dyTol or .4
+ local deadline=os.clock()+(timeout or 8)
+ local lastX=debug.getupvalues(positionReader)[7]
+ local lastMoved,lastJump=os.clock(),0
+ while os.clock()<deadline and alive and active do
+  local p=debug.getupvalues(positionReader)
+  local dx,dy=tx-p[7],ty-p[8]
+  if math.abs(dx)<=tol and math.abs(dy)<=dyTol then break end
+  local dir=math.abs(dx)<=tol and 0 or (dx>0 and 1 or -1)
+  setDir(dir)
+  if math.abs(p[7]-lastX)>.02 then lastX=p[7];lastMoved=os.clock() end
+  local needJump=dy<-math.max(.6,dyTol+.1) and math.abs(dx)<=1.2
+  local stuck=dir~=0 and os.clock()-lastMoved>.25
+  if (needJump or stuck) and os.clock()-lastJump>.45 then
+   lastJump=os.clock()
+   if OrigIsDown then
+    AutoInput.active=true;AutoInput.jump=true
+    task.delay(.12,function()AutoInput.jump=false end)
+   else
+    V:SendKeyEvent(true,walkKeys.jump,false,game)
+    task.delay(.12,function()V:SendKeyEvent(false,walkKeys.jump,false,game)end)
+   end
+  end
+  task.wait(.03)
+ end
+ setDir(0)
+ if OrigIsDown then AutoInput.active=false;AutoInput.left=false;AutoInput.right=false end
+ return alive and active
+end
+
+-- ===== PATHFINDER A* (Diperbaiki & Dioptimalkan) =====
+local Path={Bad={}}
+do
+ local floor,abs=math.floor,math.abs
+ local function fgId(w,x,y)local r=w.fg[y];return (r and r[x]) or 0 end
+ local function item(w,x,y)local id=fgId(w,x,y);return id~=0 and ItemDB[id] or nil end
+ local function solid(w,x,y)
+  if x<0 or x>=w.w or y>=w.h then return true end
+  if y<0 then return false end
+  local it=item(w,x,y)
+  return it~=nil and it.solid==true
+ end
+ local function hazard(w,x,y)local it=item(w,x,y);return it~=nil and (it.deadly or it.hurts or it.laser) and true or false end
+ local function plat(w,x,y)local it=item(w,x,y);return it~=nil and it.platform and true or false end
+ local function open(w,x,y)return not solid(w,x,y) and not hazard(w,x,y) end
+ local function support(w,x,y)return not hazard(w,x,y+1) and (solid(w,x,y+1) or plat(w,x,y+1)) end
+ local function startNode(w,x,y)
+  local nx,ny=floor(x),floor(y-.475)
+  if support(w,nx,ny) then return nx,ny end
+  for _,c in ipairs({floor(x-.3),floor(x+.3-.0001)})do
+   if c~=nx and support(w,c,ny) then return c,ny end
+  end
+  return nx,ny
+ end
+ local function astar(w,sx,sy,gx,gy,radius)
+  local W,H=w.w,w.h
+  local N=W*H
+  local openC,supC={},{}
+  local function op(x,y)
+   if x<0 or x>=W or y>=H then return false end
+   if y<0 then return true end
+   local k=y*W+x;local v=openC[k]
+   if v==nil then v=open(w,x,y);openC[k]=v end
+   return v
+  end
+  local function sup(x,y)
+   if x<0 or x>=W or y<0 or y>=H then return false end
+   local k=y*W+x;local v=supC[k]
+   if v==nil then v=support(w,x,y);supC[k]=v end
+   return v
+  end
+  local hf,hi,hn={},{},0
+  local function push(f,i)
+   hn+=1;local k=hn
+   while k>1 do
+    local p=k//2
+    if hf[p]<=f then break end
+    hf[k],hi[k]=hf[p],hi[p];k=p
+   end
+   hf[k],hi[k]=f,i
+  end
+  local function pop()
+   local top=hi[1]
+   local lf,li=hf[hn],hi[hn]
+   hf[hn],hi[hn]=nil,nil;hn-=1
+   if hn>0 then
+    local k=1
+    while true do
+     local c=k*2
+     if c>hn then break end
+     if c<hn and hf[c+1]<hf[c] then c+=1 end
+     if lf<=hf[c] then break end
+     hf[k],hi[k]=hf[c],hi[c];k=c
+    end
+    hf[k],hi[k]=lf,li
+   end
+   return top
+  end
+  local start=sy*W+sx
+  local g,came,kind,closed={[start]=0},{},{},{}
+  push(abs(gx-sx)+abs(gy-sy),start)
+  local now=os.clock()
+  local expanded=0
+  while hn>0 do
+   local cur=pop()
+   if not closed[cur] then
+    closed[cur]=true
+    local cx,cy=cur%W,cur//W
+    if abs(cx-gx)+abs(cy-gy)<=radius then
+     local out,i={},cur
+     while i~=start do
+      local p=came[i]
+      table.insert(out,1,{fx=p%W,fy=p//W,x=i%W,y=i//W,kind=kind[i],key=p*N+i})
+      i=p
+     end
+     return out
+    end
+    expanded+=1
+    if expanded>12000 then return nil end
+    if expanded%300==0 then
+     task.wait()
+     if not (alive and active) then return nil end
+    end
+    local gc=g[cur]
+    local function add(nx,ny,k,cost)
+     local ni=ny*W+nx
+     if closed[ni] then return end
+     local bad=Path.Bad[cur*N+ni]
+     if bad and bad>now then return end
+     local ng=gc+cost
+     local old=g[ni]
+     if old==nil or ng<old then
+      g[ni],came[ni],kind[ni]=ng,cur,k
+      push(ng+abs(gx-nx)+abs(gy-ny)*1.2,ni)
+     end
+    end
+    for s=-1,1,2 do
+     local ax=cx+s
+     if op(ax,cy) then
+      if sup(ax,cy) then
+       add(ax,cy,'walk',1)
+      else
+       local fy=cy+1
+       while fy<H and fy-cy<=30 and op(ax,fy) and not sup(ax,fy) do fy+=1 end
+       if fy<H and op(ax,fy) and sup(ax,fy) then add(ax,fy,'fall',1+.5*(fy-cy)) end
+       if op(cx,cy-1) then
+        for dist=2,3 do
+         local lx=cx+dist*s
+         local clear=true
+         for j=1,dist-1 do
+          local mx=cx+j*s
+          if not (op(mx,cy) and op(mx,cy-1)) then clear=false break end
+         end
+         if not clear then break end
+         if op(lx,cy) and op(lx,cy-1) and sup(lx,cy) then add(lx,cy,'gap',dist+.5) end
+        end
+       end
+      end
+     end
+     for dy=1,3 do
+      if not op(cx,cy-dy) then break end
+      if op(cx,cy-dy-1) and op(ax,cy-dy) and op(ax,cy-dy-1) and sup(ax,cy-dy) then
+       add(ax,cy-dy,'jump',1+1.5*dy)
+      end
+     end
+    end
+   end
+  end
+  return nil
+ end
+
+ local function sample()
+  local u=debug.getupvalues(positionReader)
+  local w=u[6]
+  local now=os.clock()
+  local s={x=u[7],y=u[8],w=w,vx=0,vy=0}
+  local p=Path.prev
+  if p then
+   local dt=now-p.t
+   if dt>=.012 then
+    s.vx,s.vy=(s.x-p.x)/dt,(s.y-p.y)/dt
+    Path.prev={x=s.x,y=s.y,t=now,vx=s.vx,vy=s.vy}
+   else
+    s.vx,s.vy=p.vx or 0,p.vy or 0
+   end
+  else
+   Path.prev={x=s.x,y=s.y,t=now,vx=0,vy=0}
+  end
+  local ry=floor(s.y+.01)
+  local near=abs(s.y-floor(s.y+.5))<.04
+  local function sp(cx)return solid(w,cx,ry) or plat(w,cx,ry) end
+  s.grounded=near and abs(s.vy)<1.5 and (sp(floor(s.x-.3)) or sp(floor(s.x+.3-.0001)))
+  return s
+ end
+
+ local function tick()task.wait();return alive and active end
+ local function release()AutoInput.left=false;AutoInput.right=false;AutoInput.jump=false end
+ local function steer(s,tx,tol)
+  local dx=tx-s.x
+  local dir=0
+  if abs(dx)>tol then
+   dir=dx>0 and 1 or -1
+   local decel=s.grounded and 45 or 16
+   if s.vx*dir>0 and s.vx*s.vx/(2*decel)>=abs(dx)-tol*.5 then dir=0 end
+  end
+  AutoInput.active=true
+  AutoInput.left=dir<0;AutoInput.right=dir>0
+ end
+
+ local function execWalk(tx,ty)
+  local cx=tx+.5
+  local t0=os.clock()
+  local limit=1.5+abs(cx-sample().x)*.35
+  while tick() do
+   local s=sample()
+   steer(s,cx,.1)
+   local nx,ny=floor(s.x),floor(s.y-.475)
+   if s.grounded and ny~=ty then return false end
+   if nx==tx and abs(s.x-cx)<=.2 and s.grounded and abs(s.vx)<2 then release();return true end
+   if os.clock()-t0>limit then return false end
+  end
+  return false
+ end
+
+ local function execFall(e)
+  local cx=e.x+.5
+  local t0=os.clock()
+  local limit=1.5+.3*(e.y-e.fy)
+  while tick() do
+   local s=sample()
+   steer(s,cx,.1)
+   if s.grounded then
+    local nx,ny=floor(s.x),floor(s.y-.475)
+    if ny==e.y then
+     if nx==e.x and abs(s.x-cx)<=.25 then release();return true end
+    elseif ny~=e.fy then
+     return false
+    end
+   end
+   if os.clock()-t0>limit then return false end
+  end
+  return false
+ end
+
+ local function execJump(e)
+  if not execWalk(e.fx,e.fy) then return false end
+  local dy=e.fy-e.y
+  local top=e.y+1
+  local releaseY=top-((dy==1) and 0 or .4)
+  local cx=e.x+.5
+  release()
+  if not tick() then return false end
+  AutoInput.jump=true
+  local t0=os.clock()
+  local air=false
+  while tick() do
+   local s=sample()
+   if not s.grounded then air=true end
+   if AutoInput.jump and (s.y<=releaseY or (air and s.vy>=0)) then AutoInput.jump=false end
+   if s.y<=top+.25 then steer(s,cx,.1) else steer(s,e.fx+.5,.15) end
+   if air and s.grounded then
+    local nx,ny=floor(s.x),floor(s.y-.475)
+    if ny==e.y then
+     if nx==e.x and abs(s.x-cx)<=.25 then AutoInput.jump=false;release();return true end
+    else
+     AutoInput.jump=false
+     return false
+    end
+   end
+   if not air and os.clock()-t0>.35 then AutoInput.jump=false;return false end
+   if os.clock()-t0>1.8 then AutoInput.jump=false;return false end
+  end
+  AutoInput.jump=false
+  return false
+ end
+
+ local function execGap(e)
+  if not execWalk(e.fx,e.fy) then return false end
+  local dir=(e.x>e.fx) and 1 or -1
+  local takeoff=e.fx+.5+dir*.6
+  local startY=sample().y
+  local cx=e.x+.5
+  release()
+  local t0=os.clock()
+  local jumped,air,jumpAt=false,false,0
+  while tick() do
+   local s=sample()
+   if not jumped then
+    AutoInput.left=dir<0;AutoInput.right=dir>0
+    if (s.x-takeoff)*dir>=0 or not s.grounded then jumped,jumpAt=true,os.clock();AutoInput.jump=s.grounded end
+   else
+    if not s.grounded then air=true end
+    if AutoInput.jump and (s.y<=startY-1 or (air and s.vy>=0)) then AutoInput.jump=false end
+    steer(s,cx,.1)
+    if air and s.grounded then
+     local nx,ny=floor(s.x),floor(s.y-.475)
+     if ny==e.y then
+      if nx==e.x and abs(s.x-cx)<=.25 then release();return true end
+     else
+      AutoInput.jump=false
+      return false
+     end
+    end
+    if not air and os.clock()-jumpAt>.35 then AutoInput.jump=false;return false end
+   end
+   if os.clock()-t0>2.2 then AutoInput.jump=false;return false end
+  end
+  AutoInput.jump=false
+  return false
+ end
+
+ local function follow(route)
+  local i=1
+  while i<=#route do
+   if not (alive and active) then return false end
+   local e=route[i]
+   local last,ok=i,false
+   if e.kind=='walk' then
+    local d=e.x-e.fx
+    while route[last+1] and route[last+1].kind=='walk' and (route[last+1].x-route[last+1].fx)==d do last+=1 end
+    ok=execWalk(route[last].x,route[last].y)
+   elseif e.kind=='fall' then ok=execFall(e)
+   elseif e.kind=='jump' then ok=execJump(e)
+   elseif e.kind=='gap' then ok=execGap(e) end
+   AutoInput.jump=false;release()
+   if not ok then Path.Bad[e.key]=os.clock()+20;return false end
+   i=last+1
+  end
+  return true
+ end
+
+ function Path.goCell(gx,gy,radius,maxSec,strict)
+  if not OrigIsDown then return false,'kontrol gerak game tidak ketemu' end
+  radius=radius or 0
+  local t0=os.clock()
+  maxSec=maxSec or 30
+  local fails=0
+  local result,reason=false,'waktu habis'
+  AutoInput.active=true
+  while alive and active and os.clock()-t0<maxSec do
+   local s=sample()
+   local w=s.w
+   if gx<0 or gy<0 or gx>=w.w or gy>=w.h then reason='tujuan di luar world';break end
+   local sx,sy=startNode(w,s.x,s.y)
+   if abs(sx-gx)+abs(sy-gy)<=radius and s.grounded then result=true;break end
+   local route=astar(w,sx,sy,gx,gy,radius)
+   if not route and radius<2 and not strict then route=astar(w,sx,sy,gx,gy,2) end
+   if not route then reason=string.format('tidak ada jalan ke (%d,%d)',gx,gy);break end
+   if #route==0 then result=true;break end
+   if not follow(route) then
+    fails+=1
+    if fails>=5 then reason='jalan tertahan';break end
+    task.wait(.1)
+   end
+  end
+  release();AutoInput.active=false
+  return result,reason
+ end
+end
+
+local function moveTo(px,py,tol,timeout,dyTol)
+ if walkMode=='WALK' then
+  if OrigIsDown then
+   local ok,why=Path.goCell(math.floor(px),math.floor(py-.475),0,math.max(timeout or 10,10))
+   if not ok and why then Path.LastWhy=why end
+  end
+  return walkTo(px,py,tol,OrigIsDown and 2.5 or timeout,dyTol)
+ end
+ if not active or not alive then return false end
+ local world=debug.getupvalues(positionReader)[6]
+ local done,problem=false,nil
+ task.spawn(function()local ok,err=pcall(world.goTo,px-.5,py-1);if not ok then problem=err end;done=true end)
+ local deadline=os.clock()+2
+ while not done and active and alive and os.clock()<deadline do task.wait(.01)end
+ if not active or not alive then return false end
+ assert(done,'goTo timeout');if problem then error(problem)end
+ return true
+end
+
+local function ensureHome()
+ assert(farmHome,'Posisi farm belum dikunci')
+ local attempt=0
+ while alive and active do
+  local state=debug.getupvalues(positionReader)
+  local world=state[6]
+  assert(world.name==farmHome.name,'World berubah; mulai ulang ON')
+  local near=math.abs(state[7]-farmHome[1])<=.35 and math.abs(state[8]-farmHome[2])<=.45
+  if near then
+   local stable=true
+   for sample=1,2 do
+    if not waitFor(.15)then return false end
+    local check=debug.getupvalues(positionReader)
+    if check[6].name~=farmHome.name or math.abs(check[7]-farmHome[1])>.35 or math.abs(check[8]-farmHome[2])>.45 then stable=false;break end
+   end
+   if stable then return true end
+  end
+  attempt=attempt+1
+  status.Text=string.format('KEMBALI ke anchor farm - percobaan %d | F8 stop',attempt)
+  if not moveTo(farmHome[1],farmHome[2],.2,8)then return false end
+  if not waitFor(math.min(.5+attempt*.25,3))then return false end
+ end
+ return false
+end
+
+local function key(k)V:SendKeyEvent(true,k,false,game);V:SendKeyEvent(false,k,false,game)end
+local function collectTiles(offsets,cycleHome,recoveryId,anyDrop)
+ assert(operation=='PNB' or operation=='FACTORY','Auto collect hanya aktif untuk PnB/Pabrik')
+ local u=debug.getupvalues(positionReader)
+ local world=u[6]
+ local startX,startY=cycleHome[1],cycleHome[2]
+ local initialWorld=world.name
+ local pendingDrops=0
+ local function go(x,y)
+  if not active or not alive then return false end
+  return moveTo(x+.5,y+1,.3,6)
+ end
+ release()
+ local pendingReason=''
+ local ok,problem=pcall(function()
+  assert(type(world.goTo)=='function','goTo tidak tersedia')
+  if not waitFor(.03)then return end
+  local dropList
+  for _,fn in ipairs(getgc())do if type(fn)=='function' then
+   local success,v=pcall(debug.getupvalues,fn)
+   if success and v[2]==world and type(v[1])=='table' and type(v[3])=='number' and type(v[4])=='number' and type(v[5])=='number' and type(v[6])=='function'
+    and farmBinding and v[7]==farmBinding.db and v[8]==farmBinding.inv then dropList=v[1];break end
+  end end
+  assert(dropList,'Daftar drop aktif tidak ditemukan')
+  local selectedCells={}
+  local baseX,baseY=math.floor(startX),math.floor(startY-.475)
+  for _,offset in ipairs(offsets)do
+   selectedCells[(baseX+offset[1])..':'..(baseY+offset[2])]=true
+  end
+  local function wanted(d)
+   if type(d)~='table' or not d.uid or type(d.x)~='number' or type(d.y)~='number' or d.display then return false end
+   if anyDrop then return math.abs(d.x-startX)<=8 and d.y>=startY-4 and d.y<=math.min(world.h,startY+12) end
+   if recoveryId then
+    return d.id==recoveryId and math.abs(d.x-startX)<=8 and d.y>=startY-4 and d.y<=math.min(world.h,startY+12)
+   end
+   local key=math.floor(d.x)..':'..math.floor(d.y)
+   return selectedCells[key]==true and (d.id==farmId or d.id==farmId+1 or d.id==112)
+  end
+  local function find(uid)
+   for _,d in pairs(dropList)do if type(d)=='table' and d.uid==uid then return d end end
+  end
+  local function scan()
+   local list,seen={},{}
+   for _,d in pairs(dropList)do if wanted(d) and not seen[d.uid]then list[#list+1]=d;seen[d.uid]=true end end
+   table.sort(list,function(a,b)if a.y==b.y then return a.x<b.x else return a.y<b.y end end)
+   return list
+  end
+  for pass=1,2 do
+   if recoveryId and farmBinding.inv:count(recoveryId)>0 then return end
+   if not active or not alive then return end
+   local drops=scan()
+   if #drops==0 then pendingDrops=0;return end
+   local rows,rowOrder={},{}
+   for _,drop in ipairs(drops)do
+    local row=math.floor(drop.y)
+    if not rows[row]then rows[row]={};rowOrder[#rowOrder+1]=row end
+    rows[row][#rows[row]+1]=drop
+   end
+   table.sort(rowOrder)
+   local ordered={}
+   for rowIndex,row in ipairs(rowOrder)do
+    local leftToRight=rowIndex%2==1
+    table.sort(rows[row],function(a,b)
+     if a.x==b.x then return tostring(a.uid)<tostring(b.uid) end
+     if leftToRight then return a.x<b.x end
+     return a.x>b.x
+    end)
+    for _,drop in ipairs(rows[row])do ordered[#ordered+1]=drop end
+   end
+   drops=ordered
+   local index=0
+   while #drops>0 do
+    local snapshot=table.remove(drops,1)
+    index=index+1
+    if recoveryId and farmBinding.inv:count(recoveryId)>0 then break end
+    if not active or not alive then return end
+    assert(world.name==initialWorld,'World berubah saat collect')
+    local d=find(snapshot.uid)
+    if d and not wanted(d)then d=nil end
+    if d then
+     local full=d.id~=112 and type(farmBinding.inv.room)=='function' and farmBinding.inv:room(d.id)<=0
+     if full then
+      pendingReason='inventory penuh'
+     else
+      d=find(snapshot.uid)
+      if d and not wanted(d)then d=nil end
+      if d then
+       local retryDelay=d.refused and math.max(0,1.1-(os.clock()-d.refused)) or 0
+       if retryDelay>0 and not waitFor(retryDelay)then return end
+       d=find(snapshot.uid)
+       if d and not wanted(d)then d=nil end
+       if d then
+        status.Text=string.format('COLLECT - %d | tersisa %d',index,#drops)
+        local countBefore=d.n or 0
+        local ackBefore=observed.pickupPositive
+        local inventoryBefore=farmBinding.inv:count(d.id)
+        local targetX,targetY=d.x,d.y
+        if not (active and alive and moveTo(targetX,targetY+.5,.35,6,1.2))then return end
+        local deadline=os.clock()+.85
+        while active and alive and os.clock()<deadline do
+         local current=find(snapshot.uid)
+         local inventoryNow=farmBinding.inv:count(d.id)
+         if inventoryNow>inventoryBefore or (observed.pickupPositive>ackBefore and (not current or (current.n or 0)<countBefore)) then break end
+         if not current and os.clock()>deadline-.65 then break end
+         if current and current.refused and os.clock()-current.refused<.3 then pendingReason='pickup ditolak';break end
+         if not waitFor(.03)then return end
+        end
+        local remaining=find(snapshot.uid)
+        if remaining and (remaining.n or 0)>=countBefore then
+         local position=debug.getupvalues(positionReader)
+         if math.abs(position[7]-remaining.x)>.6 or position[8]<remaining.y-.3 or position[8]>remaining.y+1.25 then
+          pendingReason='posisi bergeser dari drop'
+         elseif pendingReason=='' then pendingReason='menunggu konfirmasi pickup' end
+        end
+       end
+      end
+     end
+    end
+   end
+   pendingDrops=#scan()
+   if pendingDrops==0 then return end
+   if pass<2 and not waitFor(.12)then return end
+  end
+  pendingDrops=#scan()
+ end)
+ if alive and active then
+  local attempt=0
+  local stable=false
+  while alive and active and not stable do
+   if world.name~=initialWorld then stop('OFF - world berubah saat kembali');return end
+   attempt=attempt+1
+   status.Text=string.format('KEMBALI - percobaan %d | F8 membatalkan',attempt)
+   local returned,returnError=pcall(function()
+    if not go(startX-.5,startY-1) then return false end
+    for sample=1,3 do
+     if not waitFor(.1)then return false end
+     local current=debug.getupvalues(positionReader)
+     if current[6].name~=initialWorld or math.abs(current[7]-startX)>.35 or math.abs(current[8]-startY)>.45 then return false end
+    end
+    return true
+   end)
+   stable=returned and returnError==true
+   if not alive or not active then return end
+   if not stable then
+    status.Text=string.format('KEMBALI belum berhasil (%d) - mencoba lagi...',attempt)
+    if not waitFor(math.min(.25+attempt*.15,1.2))then return end
+   end
+  end
+ end
+ if alive and active and not ok then stop('OFF - '..tostring(problem));return end
+ if alive and active and pendingDrops>0 then
+  status.Text=string.format('ON - %d drop tertunda (%s); coba lagi siklus berikutnya',pendingDrops,pendingReason)
+  waitFor(.3)
+ end
+end
+
+refillFarm=function(id)
+ status.Text='REFILL - mencari drop block pilihan di sekitar farm'
+ collectTiles({},farmHome,id)
+ if not active or not alive then return end
+ if farmBinding.inv:count(id)>0 then status.Text='REFILL berhasil - menyiapkan slot 2' end
+end
+
+local function ensureHand()
+ local inv=debug.getupvalues(positionReader)[14]
+ for attempt=1,2 do
+  if inv.selected==18 then return true end
+  key(Enum.KeyCode.One)
+  if not waitFor(.08)then return false end
+ end
+ assert(inv.selected==18,'Slot 1 belum menjadi tangan; break dibatalkan')
+ return true
+end
+
+local lastClick=0
+local lastDirect=0
+local function directAct(kind,x,y,id,layer)
+ local wait=(kind=='place' and .14 or .22)-(os.clock()-lastDirect)
+ if wait>0 and not waitFor(wait)then return false end
+ lastDirect=os.clock()
+ if kind=='punch' then return pcall(GF.punch,x,y,true,nil) end
+ local ok=pcall(GF.setTile,layer,x,y,id,false,false)
+ if ok and farmBinding and farmBinding.inv then pcall(function()farmBinding.inv:remove(id,1)end) end
+ return ok
+end
+
+local function hold(p,s)
+ local start=lastClick>0 and last or U:GetMouseLocation()
+ if (p-start).Magnitude>2 then
+  for i=1,2 do
+   if not active or not alive then return false end
+   local alpha=i/2
+   local point=start:Lerp(p,alpha)
+   V:SendMouseMoveEvent(point.X,point.Y,game)
+   if not waitFor(.01)then return false end
+  end
+ end
+ local remaining=.235-(os.clock()-lastClick)
+ if remaining>0 and not waitFor(remaining)then return false end
+ last=p;held=true
+ V:SendMouseButtonEvent(p.X,p.Y,0,true,game,0)
+ lastClick=os.clock()
+ local ok=waitFor(s);release();return ok
+end
+
+local pnbControls={}
+for _,child in ipairs(f:GetChildren())do
+ if child:IsA('GuiObject') and child~=title and child~=pnbCategory and not child:GetAttribute('keep') and not(child:IsA('TextButton') and child.Text=='X')then pnbControls[#pnbControls+1]=child end
+end
+local clearCategory=btn('Clear World',12,90,95,26)
+local clearPage=obj('Frame',f,{Position=UDim2.fromOffset(116,52),Size=UDim2.fromOffset(412,376),BackgroundTransparency=1,Visible=false})
+do
+ local bgc=obj('Frame',clearPage,{Size=UDim2.new(1,0,1,0),BackgroundColor3=Color3.fromRGB(28,32,46),BorderSizePixel=0})
+ obj('UICorner',bgc,{CornerRadius=UDim.new(0,10)});stroke(bgc,edge,1,.55)
+end
+local function clearText(s,x,y,w,h)return obj('TextLabel',clearPage,{Text=s,Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundTransparency=1,TextColor3=Color3.new(1,1,1),Font=Enum.Font.Gotham,TextSize=13,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left})end
+local function clearButton(s,x,y,w,h)local b=obj('TextButton',clearPage,{Text=s,Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundColor3=gray,TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=13});obj('UICorner',b,{CornerRadius=UDim.new(0,6)});stroke(b,Color3.fromRGB(110,125,175),1,.7);return b end
+clearText('Clear World',8,0,390,34).TextSize=20
+clearText('Jalan halus menuju target (tanpa teleport). Pilih metode sapuan:',8,38,390,40)
+clearText('Perubahan blok pada world bersifat permanen.',8,76,390,44)
+local clearMethod='BARIS'
+local methodButtons,methodInfo={},nil
+local methodTexts={BARIS='Baris: atas ke bawah, tile terdekat di baris itu dulu.',ULAR='Ular: sapu baris kiri-kanan bergantian, minim berhenti dan balik arah.',CLUSTER='Cluster: habiskan tile di sekitar dulu (maks 3 baris), lebih cepat.'}
+for index,entry in ipairs({{'BARIS','Baris'},{'ULAR','Ular'},{'CLUSTER','Cluster'}})do
+ local b=clearButton(entry[2],8+(index-1)*132,126,124,32)
+ methodButtons[entry[1]]=b
+ b.BackgroundColor3=entry[1]==clearMethod and blue or gray
+ b.Activated:Connect(function()
+  clearMethod=entry[1]
+  for name,mb in pairs(methodButtons)do mb.BackgroundColor3=name==clearMethod and blue or gray end
+  methodInfo.Text=methodTexts[clearMethod]
+ end)
+end
+methodInfo=clearText(methodTexts[clearMethod],8,162,390,38)
+local clearStart=clearButton('Mulai Clear',8,208,180,38)
+local clearStop=clearButton('STOP / F8',202,208,180,38)
+local cwb=clearButton(walkLabel(),8,250,390,28);walkBtns[#walkBtns+1]=cwb;cwb.Activated:Connect(toggleWalk)
+local clearStatus=clearText('Siap. Scan dahulu saat Mulai ditekan.',8,284,390,80)
+
+local FA={targets={},boxes={}}
+do
+ FA.category=btn('Pabrik',12,120,95,26)
+ FA.page=obj('Frame',f,{Position=UDim2.fromOffset(116,52),Size=UDim2.fromOffset(412,376),BackgroundTransparency=1,Visible=false})
+ local bgc=obj('Frame',FA.page,{Size=UDim2.new(1,0,1,0),BackgroundColor3=Color3.fromRGB(28,32,46),BorderSizePixel=0})
+ obj('UICorner',bgc,{CornerRadius=UDim.new(0,10)});stroke(bgc,edge,1,.55)
+ local function ftext(s,x,y,w,h)return obj('TextLabel',FA.page,{Text=s,Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundTransparency=1,TextColor3=Color3.new(1,1,1),Font=Enum.Font.Gotham,TextSize=13,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left})end
+ local function fbtn(s,x,y,w,h)local b=obj('TextButton',FA.page,{Text=s,Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundColor3=gray,TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=13});obj('UICorner',b,{CornerRadius=UDim.new(0,6)});stroke(b,Color3.fromRGB(110,125,175),1,.7);return b end
+ local function fbox(s,x,y,w,h)local b=obj('TextBox',FA.page,{Text=s,Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundColor3=gray,TextColor3=Color3.new(1,1,1),Font=Enum.Font.Gotham,TextSize=14,ClearTextOnFocus=false});obj('UICorner',b,{CornerRadius=UDim.new(0,6)});stroke(b);return b end
+ ftext('Pabrik: Plant + Harvest',8,0,390,30).TextSize=20
+ ftext('Tile (P = player)',8,32,160,18).TextSize=12
+ for y=-2,2 do for x=-2,2 do
+  local k=x..':'..y
+  local gb=fbtn((x==0 and y==0) and 'P' or '',8+(x+2)*32,52+(y+2)*32,30,30)
+  FA.boxes[k]=gb
+  gb.Activated:Connect(function()FA.targets[k]=not FA.targets[k] and {x,y} or nil;gb.BackgroundColor3=FA.targets[k] and blue or gray end)
+ end end
+ fbtn('Semua',8,216,78,26).Activated:Connect(function()for y=-2,2 do for x=-2,2 do local k=x..':'..y;FA.targets[k]={x,y};FA.boxes[k].BackgroundColor3=blue end end end)
+ fbtn('Kosong',90,216,78,26).Activated:Connect(function()table.clear(FA.targets);for _,gb in pairs(FA.boxes)do gb.BackgroundColor3=gray end end)
+ FA.seedLabel=ftext('Seed: belum dipilih',180,34,224,22)
+ local pick=fbtn('Pilih seed',180,58,224,30)
+ ftext('Waktu tumbuh (detik)',180,98,130,22)
+ FA.grow=fbox('60',316,94,88,26)
+ ftext('Hit / tile (0 = auto)',180,130,130,22)
+ FA.hits=fbox('0',316,126,88,26)
+ ftext('Siklus (0 = tanpa batas)',180,162,130,34)
+ FA.cycles=fbox('0',316,158,88,26)
+ local wb=fbtn(walkLabel(),180,190,224,26);walkBtns[#walkBtns+1]=wb;wb.Activated:Connect(toggleWalk)
+ local start=fbtn('Mulai Pabrik',8,248,196,34)
+ local stopb=fbtn('STOP / F8',208,248,196,34)
+ FA.status=ftext('Siap. Pilih seed dan tile, lalu Mulai.',8,288,396,80)
+ local function openSeedPicker()
+  stop('Memuat daftar seed...')
+  local ok,err=pcall(function()
+   local b=inventoryBinding();farmBinding=b;b.gui=P.PlayerGui:FindFirstChild('InventoryGui')
+   for _,row in ipairs(entries)do row.button:Destroy()end
+   table.clear(entries)
+   local sorted={}
+   for id,item in pairs(b.db)do if type(id)=='number' and type(item)=='table' and item.kind=='seed' then sorted[#sorted+1]=id end end
+   table.sort(sorted,function(a,c)
+    local an,cn=string.lower(b.db[a].name or ''),string.lower(b.db[c].name or '')
+    if an==cn then return a<c end
+    return an<cn
+   end)
+   assert(#sorted>0,'Tidak ada seed di ItemDB')
+   for index,id in ipairs(sorted)do
+    local item=b.db[id]
+    local row=obj('TextButton',scroll,{Text=string.format('%s | x%d',item.name,b.inv:count(id)),Size=UDim2.new(1,-8,0,38),BackgroundColor3=gray,TextColor3=Color3.new(1,1,1),TextSize=12,Font=Enum.Font.Gotham,TextWrapped=true,LayoutOrder=index,ZIndex=22})
+    obj('UICorner',row,{CornerRadius=UDim.new(0,5)});stroke(row,edge,1,.7)
+    entries[#entries+1]={button=row,name=string.lower(item.name or '')}
+    row.Activated:Connect(function()
+     FA.seedId=id;FA.seedLabel.Text='Seed: '..tostring(item.name)
+     picker.Visible=false;FA.status.Text='Seed dipilih: '..tostring(item.name)
+    end)
+   end
+   picker.Visible=true;filter.Text='';applyFilter()
+  end)
+  if not ok then FA.status.Text='OFF - '..tostring(err) end
+ end
+ pick.Activated:Connect(openSeedPicker)
+ start.Activated:Connect(function()
+  if active or clearRequested or factoryRequested then FA.status.Text='Hentikan mode lain dahulu.';return end
+  factoryRequested=true;FA.status.Text='Menyiapkan Pabrik...'
+ end)
+ stopb.Activated:Connect(function()stop('OFF - Pabrik dihentikan')end)
+ status:GetPropertyChangedSignal('Text'):Connect(function()if operation=='FACTORY'then FA.status.Text=status.Text end end)
+end
+
+local function showCategory(page)
+ clearPage.Visible=page=='CLEAR'
+ FA.page.Visible=page=='FACTORY'
+ for _,item in ipairs(pnbControls)do item.Visible=page=='PNB' end
+ pnbCategory.BackgroundColor3=page=='PNB' and blue or gray
+ clearCategory.BackgroundColor3=page=='CLEAR' and blue or gray
+ FA.category.BackgroundColor3=page=='FACTORY' and blue or gray
+end
+pnbCategory.Activated:Connect(function()showCategory('PNB')end)
+clearCategory.Activated:Connect(function()showCategory('CLEAR')end)
+FA.category.Activated:Connect(function()showCategory('FACTORY')end)
+status:GetPropertyChangedSignal('Text'):Connect(function()if operation=='CLEAR'then clearStatus.Text=status.Text end end)
+clearStop.Activated:Connect(function()stop('OFF - Clear World dihentikan')end)
+
+local minimize=btn('-',454,12,30,28)
+local bubble=obj('TextButton',g,{Name='LitedirtBubble',Text='L',Size=UDim2.fromOffset(52,52),Position=UDim2.fromOffset(20,220),BackgroundColor3=blue,TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=22,Visible=false,ZIndex=80})
+obj('UICorner',bubble,{CornerRadius=UDim.new(1,0)})
+stroke(bubble,Color3.new(1,1,1),2,.6)
+local bubbleDown,bubbleOrigin,bubblePosition,bubbleMoved
+minimize.Activated:Connect(function()minimized=true;f.Visible=false;bubble.Visible=true end)
+bubble.InputBegan:Connect(function(i)
+ if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then bubbleDown=i;bubbleOrigin=i.Position;bubblePosition=bubble.Position;bubbleMoved=false end
+end)
+cons[#cons+1]=U.InputChanged:Connect(function(i)
+ if bubbleDown and (i.UserInputType==Enum.UserInputType.MouseMovement or i==bubbleDown)then
+  local d=i.Position-bubbleOrigin;if d.Magnitude>5 then bubbleMoved=true end
+  bubble.Position=bubblePosition+UDim2.fromOffset(d.X,d.Y)
+ end
+end)
+cons[#cons+1]=U.InputEnded:Connect(function(i)
+ if i==bubbleDown or (bubbleDown and i.UserInputType==Enum.UserInputType.MouseButton1)then
+  bubbleDown=nil
+  if not bubbleMoved then minimized=false;bubble.Visible=false;f.Visible=true end
+ end
+end)
+
+clearStart.Activated:Connect(function()
+ if active or clearRequested then clearStatus.Text='Hentikan mode lain dahulu.';return end
+ clearRequested=true;clearStatus.Text='Menyiapkan Clear World...'
+end)
+clearAim=obj('Frame',g,{Name='ClearAim',Size=UDim2.fromOffset(18,18),AnchorPoint=Vector2.new(.5,.5),BackgroundTransparency=1,BorderSizePixel=2,BorderColor3=Color3.fromRGB(255,220,40),Visible=false,ZIndex=90})
+
+local function clearTargetPoint(tx,ty)
+ autoPosition()
+ local state=debug.getupvalues(positionReader)
+ local px,py=math.floor(state[7]),math.floor(state[8]-.475)
+ local point=origin+Vector2.new((tx-px)*step,(ty-py)*step)
+ local inset=game:GetService('GuiService'):GetGuiInset()
+ clearAim.Position=UDim2.fromOffset(point.X-inset.X,point.Y-inset.Y)
+ clearAim.Visible=true
+ return point
+end
+
+local function clearOpenPoint(tx,ty)
+ local center=clearTargetPoint(tx,ty)
+ local state=debug.getupvalues(positionReader)
+ local gg=P.PlayerGui:FindFirstChild('GameGui')
+ local w=gg and gg:FindFirstChild('World')
+ local camera=w and w:FindFirstChild('Camera')
+ local scale=camera and camera:FindFirstChildOfClass('UIScale')
+ local pixels=state[4]*(scale and scale.Scale or 1)
+ local lastBlocker='HUD'
+ for _,offset in ipairs({{0,0},{.3,0},{-.3,0},{0,.3},{0,-.3},{.3,.3},{-.3,.3},{.3,-.3},{-.3,-.3}})do
+  local point=center+Vector2.new(offset[1]*pixels,offset[2]*pixels)
+  local blocked=false
+  for _,item in ipairs(P.PlayerGui:GetGuiObjectsAtPosition(point.X,point.Y))do
+   if item.Visible and item~=clearAim and item~=w and not item:IsDescendantOf(w) then
+    if item:IsA('GuiButton') or item:IsA('TextBox') or item.Active or item.BackgroundTransparency<1 then
+     blocked=true;lastBlocker=item:GetFullName();break
+    end
+   end
+  end
+  if not blocked then
+   local inset=game:GetService('GuiService'):GetGuiInset()
+   clearAim.Position=UDim2.fromOffset(point.X-inset.X,point.Y-inset.Y)
+   return point
+  end
+ end
+ error('Target Clear tertutup UI: '..lastBlocker)
+end
+
+local punchReason=''
+local punchCache
+local function clearPunch(tx,ty)
+ if GF.punch then
+  local cur=debug.getupvalues(positionReader)
+  if math.abs(tx+.5-cur[7])>2.42 or math.abs(ty+.5-(cur[8]-.475))>2.42 then
+   punchReason=string.format('target (%d,%d) di luar jangkauan pukul',tx,ty)
+   return false
+  end
+  local ok,err=directAct('punch',tx,ty)
+  if not ok and active and alive then punchReason='pukul gagal: '..tostring(err) end
+  return ok and true or false
+ end
+ local lastRead='aim belum terbaca'
+ for attempt=1,3 do
+  if not active or not alive then return false end
+  assert(not U:GetFocusedTextBox(),'Tutup fokus chat/input sebelum Clear World')
+  if attempt==1 and punchCache and punchCache.tx==tx and punchCache.ty==ty and os.clock()-punchCache.time<1.5 then
+   local cur=debug.getupvalues(positionReader)
+   if math.abs(cur[7]-punchCache.px)<.03 and math.abs(cur[8]-punchCache.py)<.03 then
+    local wait=.23-(os.clock()-lastClick)
+    if wait>0 and not waitFor(wait)then return false end
+    last=punchCache.point;held=true
+    V:SendMouseButtonEvent(punchCache.point.X,punchCache.point.Y,0,true,game,0)
+    lastClick=os.clock()
     if not waitFor(.03)then release();return false end
     release()
     punchCache.time=os.clock()
