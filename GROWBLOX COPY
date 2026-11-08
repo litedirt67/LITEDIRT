@@ -4,6 +4,68 @@ local U=game:GetService('UserInputService')
 local V=game:GetService('VirtualInputManager')
 for _,n in ipairs({'KENCOT','LITEDIRT'})do local old=P.PlayerGui:FindFirstChild(n);if old then old:Destroy() end end
 local function obj(c,p,t)local o=Instance.new(c);for k,v in pairs(t)do o[k]=v end;o.Parent=p;return o end
+local AutoInput={active=false,left=false,right=false,jump=false,down=false}
+local OrigIsDown,MenuMod
+do
+ local okM,mod=pcall(function()return require(P.PlayerGui:WaitForChild('GameGui',5):WaitForChild('WorldMenu',5))end)
+ if okM and type(mod)=='table' and type(rawget(mod,'isDown'))=='function' then
+  local env=type(getgenv)=='function' and getgenv() or _G
+  local cur=rawget(mod,'isDown')
+  if env.__LD_WRAP and env.__LD_WRAP==cur and env.__LD_ORIG then cur=env.__LD_ORIG end
+  OrigIsDown,MenuMod=cur,mod
+  local function wrap(saved,key,...)
+   if AutoInput.active then
+    if key=='keyLeft' then return AutoInput.left end
+    if key=='keyRight' then return AutoInput.right end
+    if key=='keyJump' then return AutoInput.jump end
+    if key=='keyDown' then return AutoInput.down end
+   end
+   return OrigIsDown(saved,key,...)
+  end
+  mod.isDown=wrap
+  env.__LD_WRAP,env.__LD_ORIG=wrap,cur
+ end
+end
+-- Fungsi asli game untuk memukul & memasang block (dicari lewat konstanta fungsinya)
+local GF={}
+local getconsts=(debug and debug.getconstants) or getconstants
+local function hasConsts(fn,want)
+ if not getconsts then return false end
+ if islclosure and not islclosure(fn) then return false end
+ local ok,c=pcall(getconsts,fn)
+ if not ok or type(c)~='table' then return false end
+ local hit={}
+ for _,k in pairs(c)do if want[k] then hit[want[k]]=true end end
+ return hit
+end
+local function isSetTileFn(fn)
+ local h=hasConsts(fn,{tile='send',SetTile='send',placedAt='placed',flips='flips'})
+ return h and h.send and h.placed and h.flips
+end
+local function isPunchFn(fn)
+ local h=hasConsts(fn,{['Empty the Vending Machine first!']='vend',newCrack='mark',HarvestProvider='mark'})
+ return h and h.vend and h.mark
+end
+local function isGameFn(fn)
+ if fn==isSetTileFn or fn==isPunchFn or fn==hasConsts then return false end
+ if isexecutorclosure then
+  local ok,res=pcall(isexecutorclosure,fn)
+  if ok and res then return false end
+ end
+ local ok,s=pcall(debug.info,fn,'s')
+ if ok and type(s)=='string' and s~='' and not string.find(s,'GameGui',1,true) then return false end
+ return true
+end
+local function findGameFns()
+ if (GF.punch and GF.setTile) or not (getgc and getconsts) then return end
+ for _,v in ipairs(getgc(true))do
+  if type(v)=='function' and isGameFn(v) then
+   if not GF.setTile and isSetTileFn(v) then GF.setTile=v
+   elseif not GF.punch and isPunchFn(v) then GF.punch=v end
+   if GF.setTile and GF.punch then break end
+  end
+ end
+end
 local g=obj('ScreenGui',P.PlayerGui,{Name='LITEDIRT',ResetOnSpawn=false,DisplayOrder=1000})
 local blue=Color3.fromRGB(66,128,245);local gray=Color3.fromRGB(40,45,60)
 local edge=Color3.fromRGB(80,92,130)
@@ -112,7 +174,7 @@ local minimized=false
 local runMode='BOTH'
 local origin,step,last=nil,nil,Vector2.zero
 local function release()if held then held=false;pcall(function()V:SendMouseButtonEvent(last.X,last.Y,0,false,game,0)end)end end
-local function stop(s)if clearAim then clearAim.Visible=false end;clearRequested=false;factoryRequested=false;active=false;release();hud.Visible=false;f.Visible=not minimized;status.Text=s or 'OFF' end
+local function stop(s)if clearAim then clearAim.Visible=false end;clearRequested=false;factoryRequested=false;active=false;AutoInput.active=false;AutoInput.left=false;AutoInput.right=false;AutoInput.jump=false;release();hud.Visible=false;f.Visible=not minimized;status.Text=s or 'OFF' end
 local positionReader
 local pointerCorrection=Vector2.zero
 local pointerGeometryKey
@@ -207,6 +269,7 @@ local function begin()
  if not next(targets)then status.Text='Pilih tile dahulu';return end
   local ok,err=pcall(function()
   bindObservations()
+  findGameFns()
   if runMode~='BREAK' then ensureFarm(true,true) end
   V:SendKeyEvent(true,slotKeys[farmSlot],false,game)
   V:SendKeyEvent(false,slotKeys[farmSlot],false,game)
@@ -218,6 +281,7 @@ local function begin()
  farmHome={start[7],start[8],name=start[6].name}
  observed.worldName=farmHome.name
  active=true;updateHud();hud.Visible=true
+ status.Text='Mode: '..((GF.punch and GF.setTile) and 'fungsi game (tanpa klik)' or 'klik layar')
 end
 for y=-2,2 do for x=-2,2 do
  local k=x..':'..y;local center=x==0 and y==0
@@ -413,8 +477,72 @@ cons[#cons+1]=U.InputBegan:Connect(function(i,processed)
  end
 end)
 -- Keep the automation active on focus loss; window rendering/input may still be throttled by Roblox.
-g.Destroying:Connect(function()alive=false;active=false;release();for _,c in ipairs(cons)do c:Disconnect()end end)
+g.Destroying:Connect(function()alive=false;active=false;AutoInput.active=false;release();local env=type(getgenv)=='function' and getgenv() or _G;if MenuMod and OrigIsDown and rawget(MenuMod,'isDown')==env.__LD_WRAP then MenuMod.isDown=OrigIsDown end;for _,c in ipairs(cons)do c:Disconnect()end end)
 local function waitFor(s)local t=os.clock()+s;repeat task.wait(.01)until not alive or not active or os.clock()>=t;return alive and active end
+-- Gerak: WALK = tahan tombol jalan/lompat seperti pemain; FAST = goTo langsung.
+-- Kalau kontrol game beda, ubah tombol di walkKeys.
+local walkKeys={left=Enum.KeyCode.A,right=Enum.KeyCode.D,jump=Enum.KeyCode.Space}
+local walkMode='WALK'
+local walkBtns={}
+local heldDir=0
+local function setDir(d)
+ if OrigIsDown then
+  AutoInput.active=true;AutoInput.left=d==-1;AutoInput.right=d==1;heldDir=d
+  return
+ end
+ if heldDir==d then return end
+ if heldDir==-1 then V:SendKeyEvent(false,walkKeys.left,false,game) elseif heldDir==1 then V:SendKeyEvent(false,walkKeys.right,false,game) end
+ heldDir=d
+ if d==-1 then V:SendKeyEvent(true,walkKeys.left,false,game) elseif d==1 then V:SendKeyEvent(true,walkKeys.right,false,game) end
+end
+local function walkLabel()return walkMode=='WALK' and 'Gerak: Jalan' or 'Gerak: Cepat (goTo)' end
+local function toggleWalk()
+ walkMode=walkMode=='WALK' and 'FAST' or 'WALK'
+ for _,b in ipairs(walkBtns)do b.Text=walkLabel() end
+end
+local function walkTo(tx,ty,tol,timeout,dyTol)
+ tol=tol or .3;dyTol=dyTol or .4
+ local deadline=os.clock()+(timeout or 8)
+ local lastX=debug.getupvalues(positionReader)[7]
+ local lastMoved,lastJump=os.clock(),0
+ while os.clock()<deadline and alive and active do
+  local p=debug.getupvalues(positionReader)
+  local dx,dy=tx-p[7],ty-p[8]
+  if math.abs(dx)<=tol and math.abs(dy)<=dyTol then break end
+  local dir=math.abs(dx)<=tol and 0 or (dx>0 and 1 or -1)
+  setDir(dir)
+  if math.abs(p[7]-lastX)>.02 then lastX=p[7];lastMoved=os.clock() end
+  local needJump=dy<-math.max(.6,dyTol+.1) and math.abs(dx)<=1.2
+  local stuck=dir~=0 and os.clock()-lastMoved>.25
+  if (needJump or stuck) and os.clock()-lastJump>.45 then
+   lastJump=os.clock()
+   if OrigIsDown then
+    AutoInput.active=true;AutoInput.jump=true
+    task.delay(.12,function()AutoInput.jump=false end)
+   else
+    V:SendKeyEvent(true,walkKeys.jump,false,game)
+    task.delay(.12,function()V:SendKeyEvent(false,walkKeys.jump,false,game)end)
+   end
+  end
+  task.wait(.03)
+ end
+ setDir(0)
+ if OrigIsDown then AutoInput.active=false;AutoInput.left=false;AutoInput.right=false end
+ return alive and active
+end
+-- px,py = posisi tujuan (sistem koordinat yang sama dengan pembaca posisi)
+local function moveTo(px,py,tol,timeout,dyTol)
+ if walkMode=='WALK' then return walkTo(px,py,tol,timeout,dyTol) end
+ if not active or not alive then return false end
+ local world=debug.getupvalues(positionReader)[6]
+ local done,problem=false,nil
+ task.spawn(function()local ok,err=pcall(world.goTo,px-.5,py-1);if not ok then problem=err end;done=true end)
+ local deadline=os.clock()+2
+ while not done and active and alive and os.clock()<deadline do task.wait(.01)end
+ if not active or not alive then return false end
+ assert(done,'goTo timeout');if problem then error(problem)end
+ return true
+end
 local function ensureHome()
  assert(farmHome,'Posisi farm belum dikunci')
  local attempt=0
@@ -434,16 +562,7 @@ local function ensureHome()
   end
   attempt=attempt+1
   status.Text=string.format('KEMBALI ke anchor farm - percobaan %d | F8 stop',attempt)
-  local done,problem=false,nil
-  task.spawn(function()
-   local ok,err=pcall(world.goTo,farmHome[1]-.5,farmHome[2]-1)
-   if not ok then problem=err end
-   done=true
-  end)
-  local deadline=os.clock()+2
-  while not done and active and alive and os.clock()<deadline do task.wait(.01)end
-  if not active or not alive then return false end
-  assert(done,'goTo timeout saat pulang');if problem then error(problem)end
+  if not moveTo(farmHome[1],farmHome[2],.2,8)then return false end
   if not waitFor(math.min(.5+attempt*.25,3))then return false end
  end
  return false
@@ -458,13 +577,7 @@ local function collectTiles(offsets,cycleHome,recoveryId,anyDrop)
  local pendingDrops=0
  local function go(x,y)
   if not active or not alive then return false end
-  local done,problem=false,nil
-  task.spawn(function()local ok,err=pcall(world.goTo,x,y);if not ok then problem=err end;done=true end)
-  local deadline=os.clock()+2
-  while not done and active and alive and os.clock()<deadline do task.wait(.01)end
-  if not active or not alive then return false end
-  assert(done,'goTo timeout');if problem then error(problem)end
-  return true
+  return moveTo(x+.5,y+1,.3,6)
  end
  release()
  local pendingReason=''
@@ -556,7 +669,7 @@ local function collectTiles(offsets,cycleHome,recoveryId,anyDrop)
         local ackBefore=observed.pickupPositive
         local inventoryBefore=farmBinding.inv:count(d.id)
         local targetX,targetY=d.x,d.y
-        if not go(targetX-.5,targetY-.5)then return end
+        if not (active and alive and moveTo(targetX,targetY+.5,.35,6,1.2))then return end
         local deadline=os.clock()+.85
         while active and alive and os.clock()<deadline do
          local current=find(snapshot.uid)
@@ -636,6 +749,17 @@ local function ensureHand()
  return true
 end
 local lastClick=0
+local lastDirect=0
+-- Pukul / pasang lewat fungsi asli game (tanpa kursor & klik). Jeda minimal sama seperti game.
+local function directAct(kind,x,y,id,layer)
+ local wait=(kind=='place' and .14 or .22)-(os.clock()-lastDirect)
+ if wait>0 and not waitFor(wait)then return false end
+ lastDirect=os.clock()
+ if kind=='punch' then return pcall(GF.punch,x,y,true,nil) end
+ local ok=pcall(GF.setTile,layer,x,y,id,false,false)
+ if ok and farmBinding and farmBinding.inv then pcall(function()farmBinding.inv:remove(id,1)end) end
+ return ok
+end
 local function hold(p,s)
  -- Move in short steps; preserve a minimum interval between mouse-down events.
  local start=lastClick>0 and last or U:GetMouseLocation()
@@ -687,8 +811,9 @@ end
 methodInfo=clearText(methodTexts[clearMethod],8,162,390,38)
 local clearStart=clearButton('Mulai Clear',8,208,180,38)
 local clearStop=clearButton('STOP / F8',202,208,180,38)
-local clearStatus=clearText('Siap. Scan dahulu saat Mulai ditekan.',8,256,390,108)
-local FA={}
+local cwb=clearButton(walkLabel(),8,250,390,28);walkBtns[#walkBtns+1]=cwb;cwb.Activated:Connect(toggleWalk)
+local clearStatus=clearText('Siap. Scan dahulu saat Mulai ditekan.',8,284,390,80)
+local FA={targets={},boxes={}}
 do
  FA.category=btn('Pabrik',12,120,95,26)
  FA.page=obj('Frame',f,{Position=UDim2.fromOffset(116,52),Size=UDim2.fromOffset(412,376),BackgroundTransparency=1,Visible=false})
@@ -697,17 +822,28 @@ do
  local function ftext(s,x,y,w,h)return obj('TextLabel',FA.page,{Text=s,Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundTransparency=1,TextColor3=Color3.new(1,1,1),Font=Enum.Font.Gotham,TextSize=13,TextWrapped=true,TextXAlignment=Enum.TextXAlignment.Left})end
  local function fbtn(s,x,y,w,h)local b=obj('TextButton',FA.page,{Text=s,Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundColor3=gray,TextColor3=Color3.new(1,1,1),Font=Enum.Font.GothamBold,TextSize=13});obj('UICorner',b,{CornerRadius=UDim.new(0,6)});stroke(b,Color3.fromRGB(110,125,175),1,.7);return b end
  local function fbox(s,x,y,w,h)local b=obj('TextBox',FA.page,{Text=s,Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),BackgroundColor3=gray,TextColor3=Color3.new(1,1,1),Font=Enum.Font.Gotham,TextSize=14,ClearTextOnFocus=false});obj('UICorner',b,{CornerRadius=UDim.new(0,6)});stroke(b);return b end
- ftext('Pabrik: Plant + Harvest',8,0,390,34).TextSize=20
- ftext('Pilih tile di menu PnB (P = posisi player). Siklus: tanam seed, tunggu, panen, kumpulkan drop.',8,38,390,40)
- FA.seedLabel=ftext('Seed: belum dipilih',8,86,250,28)
- local pick=fbtn('Pilih seed',276,84,126,32)
- ftext('Waktu tumbuh (detik)',8,128,200,24)
- FA.grow=fbox('60',216,124,90,30)
- ftext('Jumlah siklus (0 = tanpa batas)',8,162,200,36)
- FA.cycles=fbox('0',216,164,90,30)
- local start=fbtn('Mulai Pabrik',8,208,180,38)
- local stopb=fbtn('STOP / F8',202,208,180,38)
- FA.status=ftext('Siap. Pilih seed dan tile, lalu Mulai.',8,256,390,108)
+ ftext('Pabrik: Plant + Harvest',8,0,390,30).TextSize=20
+ ftext('Tile (P = player)',8,32,160,18).TextSize=12
+ for y=-2,2 do for x=-2,2 do
+  local k=x..':'..y
+  local gb=fbtn((x==0 and y==0) and 'P' or '',8+(x+2)*32,52+(y+2)*32,30,30)
+  FA.boxes[k]=gb
+  gb.Activated:Connect(function()FA.targets[k]=not FA.targets[k] and {x,y} or nil;gb.BackgroundColor3=FA.targets[k] and blue or gray end)
+ end end
+ fbtn('Semua',8,216,78,26).Activated:Connect(function()for y=-2,2 do for x=-2,2 do local k=x..':'..y;FA.targets[k]={x,y};FA.boxes[k].BackgroundColor3=blue end end end)
+ fbtn('Kosong',90,216,78,26).Activated:Connect(function()table.clear(FA.targets);for _,gb in pairs(FA.boxes)do gb.BackgroundColor3=gray end end)
+ FA.seedLabel=ftext('Seed: belum dipilih',180,34,224,22)
+ local pick=fbtn('Pilih seed',180,58,224,30)
+ ftext('Waktu tumbuh (detik)',180,98,130,22)
+ FA.grow=fbox('60',316,94,88,26)
+ ftext('Hit / tile (0 = auto)',180,130,130,22)
+ FA.hits=fbox('0',316,126,88,26)
+ ftext('Siklus (0 = tanpa batas)',180,162,130,34)
+ FA.cycles=fbox('0',316,158,88,26)
+ local wb=fbtn(walkLabel(),180,190,224,26);walkBtns[#walkBtns+1]=wb;wb.Activated:Connect(toggleWalk)
+ local start=fbtn('Mulai Pabrik',8,248,196,34)
+ local stopb=fbtn('STOP / F8',208,248,196,34)
+ FA.status=ftext('Siap. Pilih seed dan tile, lalu Mulai.',8,288,396,80)
  local function openSeedPicker()
   stop('Memuat daftar seed...')
   local ok,err=pcall(function()
@@ -823,11 +959,38 @@ local function clearOpenPoint(tx,ty)
  error('Target Clear tertutup UI: '..lastBlocker..'. Tutup/geser panel penghalang, lalu mulai lagi.')
 end
 local punchReason=''
+local punchCache
 local function clearPunch(tx,ty)
+ if GF.punch then
+  local cur=debug.getupvalues(positionReader)
+  if math.abs(tx+.5-cur[7])>2.42 or math.abs(ty+.5-(cur[8]-.475))>2.42 then
+   punchReason=string.format('target (%d,%d) di luar jangkauan pukul',tx,ty)
+   return false
+  end
+  local ok,err=directAct('punch',tx,ty)
+  if not ok and active and alive then punchReason='pukul gagal: '..tostring(err) end
+  return ok and true or false
+ end
  local lastRead='aim belum terbaca'
  for attempt=1,3 do
   if not active or not alive then return false end
   assert(not U:GetFocusedTextBox(),'Tutup fokus chat/input sebelum Clear World')
+  -- Tile yang sama dan player diam: cukup klik ulang di titik yang sama (tanpa gerak kursor / cek aim lagi).
+  if attempt==1 and punchCache and punchCache.tx==tx and punchCache.ty==ty and os.clock()-punchCache.time<1.5 then
+   local cur=debug.getupvalues(positionReader)
+   if math.abs(cur[7]-punchCache.px)<.03 and math.abs(cur[8]-punchCache.py)<.03 then
+    local wait=.23-(os.clock()-lastClick)
+    if wait>0 and not waitFor(wait)then return false end
+    last=punchCache.point;held=true
+    V:SendMouseButtonEvent(punchCache.point.X,punchCache.point.Y,0,true,game,0)
+    lastClick=os.clock()
+    if not waitFor(.03)then release();return false end
+    release()
+    punchCache.time=os.clock()
+    return true
+   end
+  end
+  punchCache=nil
   if attempt>1 and not waitFor(.15)then return false end
   local okPoint,point=pcall(clearOpenPoint,tx,ty)
   if not okPoint then
@@ -870,7 +1033,7 @@ local function clearPunch(tx,ty)
    end
   end
   release()
-  if matched then return true end
+  if matched then punchCache={tx=tx,ty=ty,point=point,px=state[7],py=state[8],time=os.clock()};return true end
   status.Text=string.format('CLEAR - sinkronkan aim (%d,%d), coba %d/3',tx,ty,attempt)
  end
  punchReason=string.format('aim belum cocok: target (%d,%d), game %s',tx,ty,lastRead)
@@ -878,9 +1041,10 @@ local function clearPunch(tx,ty)
 end
 local function executeClear()
  operation='CLEAR'
- local setup,problem=pcall(function()farmBinding=inventoryBinding();autoPosition();bindObservations()end)
+ local setup,problem=pcall(function()farmBinding=inventoryBinding();autoPosition();bindObservations();findGameFns()end)
  if not setup then clearStatus.Text=tostring(problem);return end
  active=true;hud.Visible=true;f.Visible=false
+ status.Text='Mode: '..(GF.punch and 'pukul lewat fungsi game (tanpa klik)' or 'klik layar')
   local ok,err=pcall(function()
    local state=debug.getupvalues(positionReader)
    local world=state[6];local name=world.name;local db=farmBinding.db
@@ -959,6 +1123,11 @@ local function executeClear()
       local distance=math.sqrt(dx*dx+dy*dy)
       if distance<.55 then break end
       attempts=attempts+1;if attempts>20 then return false,string.format('waypoint (%d,%d) belum tercapai; aktual %.2f,%.2f, jarak %.2f',waypoint.x,waypoint.y,p[7],p[8],distance) end
+      if walkMode=='WALK' then
+       if attempts>6 then return false,string.format('jalan ke (%d,%d) tertahan; aktual %.2f,%.2f',waypoint.x,waypoint.y,p[7],p[8]) end
+       if not moveTo(waypoint.x+.5,waypoint.y+1,.3,3,1.0)then return false end
+       continue
+      end
       local ratio=math.min(1,walkStep/distance)
       local nx,ny=p[7]+dx*ratio,p[8]+dy*ratio
       local done,problem=false,nil
@@ -1145,14 +1314,18 @@ local function executeFactory()
  local tb=U:GetFocusedTextBox();if tb then tb:ReleaseFocus() end
  local setup,problem=pcall(function()
   assert(FA.seedId,'Pilih seed dahulu')
-  assert(next(targets),'Pilih tile di menu PnB dahulu')
+  assert(next(FA.targets),'Pilih tile di grid Pabrik dahulu')
   farmBinding=inventoryBinding();farmBinding.gui=P.PlayerGui:FindFirstChild('InventoryGui')
-  bindObservations();autoPosition()
+  bindObservations();autoPosition();findGameFns()
  end)
  if not setup then FA.status.Text='OFF - '..tostring(problem);operation='PNB';return end
  local growSeconds=math.max(1,tonumber(FA.grow.Text) or 60)
  local maxCycles=math.max(0,math.floor(tonumber(FA.cycles.Text) or 0))
+ local hitLimit=math.floor(tonumber(FA.hits.Text) or 0)
+ if hitLimit<1 then hitLimit=150 end
+ hitLimit=math.min(150,hitLimit)
  active=true;hud.Visible=true;f.Visible=false
+ status.Text='Mode: '..((GF.punch and GF.setTile) and 'fungsi game (tanpa klik)' or 'klik layar')
  local ok,err=pcall(function()
   local seedId=FA.seedId
   local state=debug.getupvalues(positionReader)
@@ -1161,7 +1334,7 @@ local function executeFactory()
   observed.worldName=name
   local baseX,baseY=math.floor(state[7]),math.floor(state[8]-.475)
   local offsets={}
-  for _,v in pairs(targets)do offsets[#offsets+1]=v end
+  for _,v in pairs(FA.targets)do offsets[#offsets+1]=v end
   table.sort(offsets,function(a,b)if a[2]==b[2]then return a[1]<b[1]else return a[2]<b[2]end end)
   local cells,kept={},{}
   for _,o in ipairs(offsets)do
@@ -1200,13 +1373,18 @@ local function executeFactory()
       if farmBinding.inv.selected~=seedId then key(Enum.KeyCode.Two);if not waitFor(.1)then return nil end end
       local stockBefore=farmBinding.inv:count(seedId)
       status.Text=string.format('PLANT %d/%d (%d,%d) coba %d',i,#cells,c.x,c.y,attempt)
-      clearPunch(c.x,c.y)
+      local direct=GF.setTile~=nil
+      if direct then
+       if not directAct('place',c.x,c.y,seedId,'fg') then return nil end
+      else
+       clearPunch(c.x,c.y)
+      end
       if not active or not alive then return nil end
       local untilT=os.clock()+.8
-      while tileAt(c.x,c.y)==0 and farmBinding.inv:count(seedId)>=stockBefore and os.clock()<untilT do
+      while tileAt(c.x,c.y)==0 and (direct or farmBinding.inv:count(seedId)>=stockBefore) and os.clock()<untilT do
        if not waitFor(.05)then return nil end
       end
-      if tileAt(c.x,c.y)~=0 or farmBinding.inv:count(seedId)<stockBefore then
+      if tileAt(c.x,c.y)~=0 or (not direct and farmBinding.inv:count(seedId)<stockBefore) then
        local settle=os.clock()+.3
        while tileAt(c.x,c.y)==0 and os.clock()<settle do if not waitFor(.05)then return nil end end
        planted[#planted+1]={x=c.x,y=c.y,id=tileAt(c.x,c.y)}
@@ -1231,7 +1409,7 @@ local function executeFactory()
    for i,c in ipairs(planted)do
     if c.id~=0 then
      local hits,fails=0,0
-     while tileAt(c.x,c.y)==c.id and hits<150 and fails<3 do
+     while tileAt(c.x,c.y)==c.id and hits<hitLimit and fails<3 do
       if not active or not alive then return false end
       if not ensureHand()then return false end
       hits=hits+1
@@ -1353,7 +1531,7 @@ task.spawn(function()while alive do task.wait(.03);if active and operation=='PNB
      if phase[3]=='PUT' then
       if existing~=desired then
        status.Text=string.format('PUT %d/%d',index,#points)
-       if not hold(screenPoint(target),.03)then return end
+       if GF.setTile then if not directAct('place',target.x,target.y,farmId,layer==2 and 'bg' or 'fg') then return end elseif not hold(screenPoint(target),.03)then return end
       end
       pendingPut[#pendingPut+1]={target=target,grid=grid,id=desired}
       confirmed=true;verification='menunggu pemeriksaan batch'
@@ -1364,7 +1542,7 @@ task.spawn(function()while alive do task.wait(.03);if active and operation=='PNB
       for hit=1,clicks do
        if tileId()==desired and hit>1 then break end
        status.Text=string.format('%s %d/%d - hit %d/%d - coba %d',phase[3],index,#points,hit,clicks,attempts)
-       if not hold(screenPoint(target),.03) then return end
+       if GF.punch then if not directAct('punch',target.x,target.y) then return end elseif not hold(screenPoint(target),.03) then return end
       end
       local deadline=os.clock()+1.5
       local stableSince
@@ -1407,7 +1585,7 @@ task.spawn(function()while alive do task.wait(.03);if active and operation=='PNB
      while alive and active and not placed() and retries<2 do
       retries=retries+1
       status.Text=string.format('PUT ulang (%d,%d) - %d/2',target.x,target.y,retries)
-      if not hold(screenPoint(target),.03)or not waitFor(.2)then return end
+      if GF.setTile then if not directAct('place',target.x,target.y,entry.id,entry.grid==world.bg and 'bg' or 'fg') or not waitFor(.2)then return end elseif not hold(screenPoint(target),.03)or not waitFor(.2)then return end
      end
      if not alive or not active then return end
      assert(placed(),string.format('PUT (%d,%d) belum cocok setelah pemeriksaan batch',target.x,target.y))
